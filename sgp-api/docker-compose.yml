@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sgp
+      POSTGRES_PASSWORD: sgp_dev_password
+      POSTGRES_DB: sgp_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - sgp_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sgp -d sgp_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sgp:sgp_dev_password@db:5432/sgp_dev
+      APP_ENV: development
+      APP_DEBUG: "true"
+      AUTH_MODE: mock
+      LOG_LEVEL: INFO
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./alembic:/app/alembic
+      - ./scripts:/app/scripts
+    command: >
+      sh -c "alembic upgrade head &&
+             python scripts/seed.py &&
+             uvicorn sgp.main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  sgp_pg_data:
