@@ -1,5 +1,8 @@
 """Endpoints HTTP de Solicitudes de Compra."""
 
+from datetime import date
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,18 +71,32 @@ async def create_solicitud(
 
 
 @router.get("", response_model=list[SolicitudCompraRead])
-async def list_solicitudes(
-    status: SCStatus | None = Query(None),
-    mias: bool = Query(False, description="Filtra solo las creadas por el usuario actual"),
+async def list_solicitudes(  # noqa: PLR0913 — filtros HTTP, todos opcionales
+    status: SCStatus | None = Query(None, description="Filtra por estado del workflow"),
+    mias: bool = Query(False, description="Solo las creadas por el usuario actual"),
+    empresa_id: int | None = Query(None, gt=0),
+    centro_costo_id: int | None = Query(None, gt=0),
+    fecha_desde: date | None = Query(None, description="fecha_requerida >= (incluido)"),
+    fecha_hasta: date | None = Query(None, description="fecha_requerida <= (incluido)"),
+    monto_min: Decimal | None = Query(None, ge=0, description="monto_estimado >= (incluido)"),
+    monto_max: Decimal | None = Query(None, ge=0, description="monto_estimado <= (incluido)"),
+    numero: str | None = Query(None, description="Búsqueda por substring del número de SC"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
     repo = SolicitudCompraRepository(db)
-    scs = await repo.list_by_status(
+    scs = await repo.list_(
         status=status,
         solicitante_id=user.id if mias else None,
+        empresa_id=empresa_id,
+        centro_costo_id=centro_costo_id,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+        monto_min=monto_min,
+        monto_max=monto_max,
+        numero=numero,
         limit=limit,
         offset=offset,
     )

@@ -10,7 +10,11 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
-from sgp.core.exceptions import InvalidTransitionError, PermissionDenied
+from sgp.core.exceptions import (
+    BusinessRuleViolation,
+    InvalidTransitionError,
+    PermissionDenied,
+)
 from sgp.modules.auditoria.models import AuditLog
 from sgp.modules.catalogo.models import (
     CatalogoItem,
@@ -223,8 +227,6 @@ class TestTransiciones:
 class TestRecotizacion:
     async def test_excede_max_recotizaciones_bloquea(self, db_session, setup_basico, payload_sc):
         """RN8: máximo 2 ciclos de recotización."""
-        from sgp.core.exceptions import BusinessRuleViolation
-
         service = SolicitudCompraService(db_session)
         sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
 
@@ -389,3 +391,257 @@ class TestAuditLogTrazabilidad:
         assert "SUBMIT" in actions_logged
         assert "APPROVE_AREA" in actions_logged
         assert "RELEASE_BUDGET" in actions_logged
+
+    async def test_audit_log_actor_role_es_el_que_justifica_la_accion(
+        self, db_session, setup_basico, payload_sc
+    ):
+        """Bug fix: actor_role debe ser el rol que autoriza la acción, no el primer
+        rol del usuario. user_admin (que también puede ser solicitante) debería
+        registrar 'admin' en SUBMIT, no 'solicitante'."""
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+
+        # u_jefe SUBMIT no aplica (no es dueño), pero u_jefe APPROVE_AREA sí.
+        # Probamos con u_jefe que tiene solo el rol jefe_area.
+        await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+        await service.apply_transition(
+            sc.id,
+            TransitionRequest(action=SCAction.APPROVE_AREA, comment="OK"),
+            setup_basico["usuarios"]["u_jefe"],
+        )
+
+        result = await db_session.execute(
+            select(AuditLog)
+            .where(AuditLog.entity_id == str(sc.id), AuditLog.action == "APPROVE_AREA")
+        )
+        log = result.scalar_one()
+        assert log.actor_role == "jefe_area"
+
+
+class TestRefinamientosSolicitudes:
+    """Tests para los 4 refinamientos del módulo:
+    1. Comments obligatorios en rechazos.
+    2. Bug fix _primary_role_for_action.
+    3. Scope por empresa en autorización.
+    4. Validación fecha_requerida >= hoy (en schema).
+    """
+
+    # --- 1. Comments obligatorios ---
+
+    async def test_reject_area_sin_comment_lanza(self, db_session, setup_basico, payload_sc):
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+
+        with pytest.raises(BusinessRuleViolation, match="comment"):
+            await service.apply_transition(
+                sc.id,
+                TransitionRequest(action=SCAction.REJECT_AREA),  # sin comment
+                setup_basico["usuarios"]["u_jefe"],
+            )
+
+    async def test_reject_area_con_comment_vacio_lanza(self, db_session, setup_basico, payload_sc):
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+
+        with pytest.raises(BusinessRuleViolation, match="comment"):
+            await service.apply_transition(
+                sc.id,
+                TransitionRequest(action=SCAction.REJECT_AREA, comment="   "),
+                setup_basico["usuarios"]["u_jefe"],
+            )
+
+    async def test_reject_area_con_comment_pasa(self, db_session, setup_basico, payload_sc):
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+
+        sc = await service.apply_transition(
+            sc.id,
+            TransitionRequest(action=SCAction.REJECT_AREA, comment="Sin presupuesto disponible"),
+            setup_basico["usuarios"]["u_jefe"],
+        )
+        assert sc.status == SCStatus.REJECTED
+
+    async def test_approve_area_no_requiere_comment(self, db_session, setup_basico, payload_sc):
+        """RN-COMMENT solo aplica a rechazos / no-conformidad, no a aprobaciones."""
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+        sc = await service.apply_transition(
+            sc.id,
+            TransitionRequest(action=SCAction.APPROVE_AREA),  # sin comment, OK
+            setup_basico["usuarios"]["u_jefe"],
+        )
+        assert sc.status == SCStatus.PENDING_BUDGET
+
+    # --- 3. Scope por empresa ---
+
+    async def test_jefe_de_otra_empresa_no_puede_aprobar(
+        self, db_session, setup_basico, payload_sc
+    ):
+        """Si el rol del jefe está vinculado a otra empresa, debe ser rechazado."""
+        from sgp.modules.empresas.models import Empresa
+        from sgp.modules.usuarios.models import Rol, Usuario, usuario_roles_table
+
+        # Crear una segunda empresa y un jefe con rol vinculado SOLO a esa empresa
+        otra_emp = Empresa(rut="76999999-9", razon_social="Otra Empresa", nombre_corto="OTRA")
+        db_session.add(otra_emp)
+        await db_session.flush()
+
+        u_jefe2 = Usuario(
+            clerk_user_id="u_jefe2", email="jefe2@x.cl", nombre="Jefe Otra Empresa", activo=True
+        )
+        db_session.add(u_jefe2)
+        await db_session.flush()
+
+        rol_jefe = (
+            await db_session.execute(select(Rol).where(Rol.nombre == "jefe_area"))
+        ).scalar_one()
+        await db_session.execute(
+            usuario_roles_table.insert().values(
+                usuario_id=u_jefe2.id, rol_id=rol_jefe.id, empresa_id=otra_emp.id
+            )
+        )
+
+        # Recargar con roles eager
+        from sqlalchemy.orm import selectinload
+        u_jefe2 = (
+            await db_session.execute(
+                select(Usuario)
+                .options(selectinload(Usuario.roles))
+                .where(Usuario.id == u_jefe2.id)
+            )
+        ).scalar_one()
+
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+
+        with pytest.raises(PermissionDenied, match="empresa"):
+            await service.apply_transition(
+                sc.id,
+                TransitionRequest(action=SCAction.APPROVE_AREA, comment="OK"),
+                u_jefe2,
+            )
+
+    async def test_jefe_con_rol_global_puede_aprobar_cualquier_empresa(
+        self, db_session, setup_basico, payload_sc
+    ):
+        """Un rol con empresa_id=NULL aplica a SCs de cualquier empresa.
+        El setup_basico crea todos los roles con NULL, así que esto debería pasar."""
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+        sc = await service.apply_transition(
+            sc.id,
+            TransitionRequest(action=SCAction.APPROVE_AREA),
+            setup_basico["usuarios"]["u_jefe"],
+        )
+        assert sc.status == SCStatus.PENDING_BUDGET
+
+    # --- 4. Validación fecha_requerida >= hoy ---
+
+    def test_payload_con_fecha_pasada_lanza(self, setup_basico):
+        """El validator de Pydantic debe rechazar fecha_requerida en el pasado."""
+        from pydantic import ValidationError as PydanticValidationError
+
+        with pytest.raises(PydanticValidationError, match="fecha_requerida"):
+            SolicitudCompraCreate(
+                empresa_id=setup_basico["empresa"].id,
+                centro_costo_id=setup_basico["cc"].id,
+                tipo=TipoCompra.BIEN,
+                urgencia=Urgencia.NORMAL,
+                descripcion="Test fecha pasada",
+                monto_estimado=Decimal("1000"),
+                fecha_requerida=date.today() - timedelta(days=1),
+                lineas=[LineaCreate(item_id=setup_basico["item"].id, cantidad=Decimal("1"))],
+            )
+
+    def test_payload_con_fecha_hoy_pasa(self, setup_basico):
+        payload = SolicitudCompraCreate(
+            empresa_id=setup_basico["empresa"].id,
+            centro_costo_id=setup_basico["cc"].id,
+            tipo=TipoCompra.BIEN,
+            urgencia=Urgencia.NORMAL,
+            descripcion="Test fecha hoy",
+            monto_estimado=Decimal("1000"),
+            fecha_requerida=date.today(),
+            lineas=[LineaCreate(item_id=setup_basico["item"].id, cantidad=Decimal("1"))],
+        )
+        assert payload.fecha_requerida == date.today()
+
+
+class TestRepositoryFiltros:
+    """Tests del nuevo método list_ con filtros enriquecidos."""
+
+    async def test_filtro_empresa_id(self, db_session, setup_basico, payload_sc):
+        """Solo devuelve SCs de la empresa especificada."""
+        from sgp.modules.empresas.models import Empresa, CentroCosto
+        from sgp.modules.solicitudes.repository import SolicitudCompraRepository
+
+        # Segunda empresa con su CC
+        otra_emp = Empresa(rut="76888888-8", razon_social="Otra", nombre_corto="OTRA")
+        db_session.add(otra_emp)
+        await db_session.flush()
+        otra_cc = CentroCosto(empresa_id=otra_emp.id, codigo="O-001", nombre="Otra Op")
+        db_session.add(otra_cc)
+        await db_session.flush()
+
+        service = SolicitudCompraService(db_session)
+        sc1 = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+
+        # SC de la otra empresa
+        payload_otra = _build_payload(setup_basico, Decimal("3000000"))
+        payload_otra = payload_otra.model_copy(
+            update={"empresa_id": otra_emp.id, "centro_costo_id": otra_cc.id}
+        )
+        sc2 = await service.create(payload_otra, setup_basico["usuarios"]["u_sol"])
+
+        repo = SolicitudCompraRepository(db_session)
+        scs_emp1 = await repo.list_(empresa_id=setup_basico["empresa"].id)
+        ids_emp1 = {s.id for s in scs_emp1}
+        assert sc1.id in ids_emp1
+        assert sc2.id not in ids_emp1
+
+    async def test_filtro_rango_monto(self, db_session, setup_basico):
+        """Filtra por monto_min y monto_max."""
+        from sgp.modules.solicitudes.repository import SolicitudCompraRepository
+
+        service = SolicitudCompraService(db_session)
+        actor = setup_basico["usuarios"]["u_sol"]
+        for monto in [Decimal("500000"), Decimal("3000000"), Decimal("8000000")]:
+            await service.create(_build_payload(setup_basico, monto), actor)
+
+        repo = SolicitudCompraRepository(db_session)
+        # Solo el medio: 1M < monto < 5M
+        scs = await repo.list_(monto_min=Decimal("1000001"), monto_max=Decimal("4999999"))
+        assert len(scs) == 1
+        assert scs[0].monto_estimado == Decimal("3000000")
+
+    async def test_filtro_numero_substring(self, db_session, setup_basico, payload_sc):
+        from sgp.modules.solicitudes.repository import SolicitudCompraRepository
+
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+
+        repo = SolicitudCompraRepository(db_session)
+        # Búsqueda parcial por el año
+        year = sc.numero.split("-")[1]
+        scs = await repo.list_(numero=year)
+        assert sc.id in {s.id for s in scs}

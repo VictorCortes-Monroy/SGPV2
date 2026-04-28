@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from sgp.modules.solicitudes.models import TipoCompra, Urgencia
 from sgp.modules.solicitudes.state_machine import SCAction, SCStatus
@@ -40,6 +40,16 @@ class SolicitudCompraCreate(BaseModel):
     monto_estimado: Decimal = Field(..., gt=0)
     fecha_requerida: date
     lineas: list[LineaCreate] = Field(..., min_length=1)
+
+    @field_validator("fecha_requerida")
+    @classmethod
+    def _fecha_no_en_pasado(cls, v: date) -> date:
+        """RN-DAT-3: la fecha requerida no puede ser anterior a hoy."""
+        if v < date.today():
+            raise ValueError(
+                f"fecha_requerida ({v.isoformat()}) no puede ser anterior a hoy"
+            )
+        return v
 
 
 class SolicitudCompraRead(BaseModel):

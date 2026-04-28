@@ -6,6 +6,7 @@ Responsable de:
 - Coordinar reglas de negocio entre módulos
 """
 
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sgp.core.audit import AuditService
@@ -18,7 +19,47 @@ from sgp.modules.solicitudes.state_machine import (
     SCStatus,
     apply_action,
 )
-from sgp.modules.usuarios.models import Usuario
+from sgp.modules.usuarios.models import Usuario, usuario_roles_table
+
+
+# Mapeo acción → roles autorizados (OR). El rol `admin` puede ejecutar
+# cualquier acción (override en _authorize_action).
+REQUIRED_ROLES_BY_ACTION: dict[SCAction, set[str]] = {
+    SCAction.SUBMIT: {"solicitante"},
+    SCAction.APPROVE_AREA: {"jefe_area"},
+    SCAction.REJECT_AREA: {"jefe_area"},
+    SCAction.RELEASE_BUDGET: {"finanzas"},
+    SCAction.FREEZE_BUDGET: {"finanzas"},
+    SCAction.AUTHORIZE_FROZEN: {"gerencia", "finanzas"},
+    SCAction.APPROVE_MANAGEMENT: {"gerencia"},
+    SCAction.REJECT_MANAGEMENT: {"gerencia"},
+    SCAction.REGISTER_QUOTATIONS: {"abastecimiento"},
+    SCAction.SEND_VALORIZATION: {"abastecimiento"},
+    SCAction.APPROVE_VALORIZATION: {"jefe_area"},
+    SCAction.REQUEST_RECOTIZATION: {"jefe_area"},
+    SCAction.REJECT_VALORIZATION: {"jefe_area"},
+    SCAction.EMIT_PO: {"abastecimiento"},
+    SCAction.APPROVE_PO: {"gerencia"},
+    SCAction.REJECT_PO: {"gerencia"},
+    SCAction.SEND_PO_TO_SUPPLIER: {"abastecimiento"},
+    SCAction.REGISTER_RECEPTION_CONFORM: {"bodega", "solicitante"},
+    SCAction.REGISTER_RECEPTION_NON_CONFORM: {"bodega", "solicitante"},
+    SCAction.RECEIVE_INVOICE: {"finanzas", "abastecimiento"},
+    SCAction.MATCH_INVOICE_OK: {"finanzas"},
+    SCAction.MATCH_INVOICE_FAIL: {"finanzas"},
+    SCAction.CLOSE: {"finanzas", "abastecimiento"},
+    SCAction.CANCEL: {"solicitante", "jefe_area"},
+}
+
+# Acciones que exigen `comment` no vacío para preservar trazabilidad
+# (RN-COMMENT). Aplica a todos los rechazos y a la recepción no conforme.
+ACTIONS_REQUIRING_COMMENT: set[SCAction] = {
+    SCAction.REJECT_AREA,
+    SCAction.REJECT_VALORIZATION,
+    SCAction.REJECT_PO,
+    SCAction.REJECT_MANAGEMENT,
+    SCAction.REGISTER_RECEPTION_NON_CONFORM,
+}
 
 
 class SolicitudCompraService:
@@ -93,7 +134,8 @@ class SolicitudCompraService:
         if not sc:
             raise NotFoundError(f"SC {sc_id} no encontrada")
 
-        self._authorize_action(sc, request.action, actor)
+        self._validate_required_comment(request)
+        await self._authorize_action(sc, request.action, actor)
         before = sc.snapshot()
 
         # Aplicar transición de estado (valida automáticamente).
@@ -123,55 +165,72 @@ class SolicitudCompraService:
         return sc
 
     # ------------------------------------------------------------------
-    # Autorización
+    # Validaciones de payload
     # ------------------------------------------------------------------
     @staticmethod
-    def _authorize_action(sc: SolicitudCompra, action: SCAction, actor: Usuario) -> None:
-        """Valida que el actor tenga rol para ejecutar la acción.
+    def _validate_required_comment(request: TransitionRequest) -> None:
+        """RN-COMMENT: las acciones de rechazo / no-conformidad exigen un comment
+        no vacío para preservar trazabilidad legal y auditoría."""
+        if request.action in ACTIONS_REQUIRING_COMMENT:
+            if request.comment is None or not request.comment.strip():
+                raise BusinessRuleViolation(
+                    f"La acción '{request.action.value}' requiere un comment "
+                    "explicando el motivo (no puede estar vacío)."
+                )
 
-        Por simplicidad, este es el mapeo inicial. En producción, esto se
-        cruza con el scope del usuario (su área, su empresa, su CC).
+    # ------------------------------------------------------------------
+    # Autorización
+    # ------------------------------------------------------------------
+    async def _authorize_action(
+        self, sc: SolicitudCompra, action: SCAction, actor: Usuario
+    ) -> None:
+        """Valida que el actor tenga rol para ejecutar la acción y que ese
+        rol esté vinculado a la empresa de la SC.
+
+        Reglas:
+        1. `admin` puede ejecutar cualquier acción sin scope (override).
+        2. El actor debe tener al menos uno de los roles requeridos.
+        3. Ese rol debe estar vinculado a `sc.empresa_id` o ser global
+           (`empresa_id IS NULL`) en la tabla `usuarios_roles`.
+        4. Para SUBMIT y CANCEL, el actor debe ser el solicitante original.
         """
-        required_roles_by_action: dict[SCAction, set[str]] = {
-            SCAction.SUBMIT: {"solicitante"},
-            SCAction.APPROVE_AREA: {"jefe_area"},
-            SCAction.REJECT_AREA: {"jefe_area"},
-            SCAction.RELEASE_BUDGET: {"finanzas"},
-            SCAction.FREEZE_BUDGET: {"finanzas"},
-            SCAction.AUTHORIZE_FROZEN: {"gerencia", "finanzas"},
-            SCAction.APPROVE_MANAGEMENT: {"gerencia"},
-            SCAction.REJECT_MANAGEMENT: {"gerencia"},
-            SCAction.REGISTER_QUOTATIONS: {"abastecimiento"},
-            SCAction.SEND_VALORIZATION: {"abastecimiento"},
-            SCAction.APPROVE_VALORIZATION: {"jefe_area"},
-            SCAction.REQUEST_RECOTIZATION: {"jefe_area"},
-            SCAction.REJECT_VALORIZATION: {"jefe_area"},
-            SCAction.EMIT_PO: {"abastecimiento"},
-            SCAction.APPROVE_PO: {"gerencia"},
-            SCAction.REJECT_PO: {"gerencia"},
-            SCAction.SEND_PO_TO_SUPPLIER: {"abastecimiento"},
-            SCAction.REGISTER_RECEPTION_CONFORM: {"bodega", "solicitante"},
-            SCAction.REGISTER_RECEPTION_NON_CONFORM: {"bodega", "solicitante"},
-            SCAction.RECEIVE_INVOICE: {"finanzas", "abastecimiento"},
-            SCAction.MATCH_INVOICE_OK: {"finanzas"},
-            SCAction.MATCH_INVOICE_FAIL: {"finanzas"},
-            SCAction.CLOSE: {"finanzas", "abastecimiento"},
-            SCAction.CANCEL: {"solicitante", "jefe_area"},
-        }
-        required = required_roles_by_action.get(action, set())
-        actor_roles = {r.nombre for r in actor.roles}
+        required = REQUIRED_ROLES_BY_ACTION.get(action, set())
+        actor_role_names = {r.nombre for r in actor.roles}
 
-        # El admin puede todo
-        if "admin" in actor_roles:
+        # Admin override (sin scope)
+        if "admin" in actor_role_names:
+            if action in {SCAction.SUBMIT, SCAction.CANCEL} and actor.id != sc.solicitante_id:
+                raise PermissionDenied(
+                    "Solo el solicitante original puede ejecutar esta acción sobre su SC"
+                )
             return
 
-        if not actor_roles.intersection(required):
+        # Verifica que tenga al menos uno de los roles requeridos
+        if not actor_role_names.intersection(required):
             raise PermissionDenied(
                 f"Acción '{action.value}' requiere uno de los roles: {sorted(required)}"
             )
 
-        # Solicitante: además debe ser el dueño de la SC
-        if action in {SCAction.SUBMIT, SCAction.CANCEL} and "admin" not in actor_roles:
+        # Scope: el rol que da permiso debe estar vinculado a la empresa de la
+        # SC (o a NULL = aplica globalmente).
+        matching_role_ids = [r.id for r in actor.roles if r.nombre in required]
+        stmt = select(usuario_roles_table).where(
+            usuario_roles_table.c.usuario_id == actor.id,
+            usuario_roles_table.c.rol_id.in_(matching_role_ids),
+            or_(
+                usuario_roles_table.c.empresa_id == sc.empresa_id,
+                usuario_roles_table.c.empresa_id.is_(None),
+            ),
+        )
+        result = await self.db.execute(stmt)
+        if result.first() is None:
+            raise PermissionDenied(
+                f"El rol del actor para '{action.value}' no está vinculado a la "
+                f"empresa {sc.empresa_id} de la SC."
+            )
+
+        # Solicitante / dueño: SUBMIT y CANCEL solo por el creador
+        if action in {SCAction.SUBMIT, SCAction.CANCEL}:
             if actor.id != sc.solicitante_id:
                 raise PermissionDenied(
                     "Solo el solicitante original puede ejecutar esta acción sobre su SC"
@@ -179,9 +238,19 @@ class SolicitudCompraService:
 
     @staticmethod
     def _primary_role_for_action(actor: Usuario, action: SCAction) -> str | None:
-        """Devuelve el rol que justifica la acción (primer match)."""
-        for r in actor.roles:
-            return r.nombre
+        """Devuelve el nombre del rol que justifica la acción.
+
+        Busca el primer rol del actor que esté en `REQUIRED_ROLES_BY_ACTION[action]`.
+        Si el actor es admin, devuelve "admin" (override). Útil para popular
+        `actor_role` en audit_log con info significativa.
+        """
+        actor_role_names = {r.nombre for r in actor.roles}
+        if "admin" in actor_role_names:
+            return "admin"
+        required = REQUIRED_ROLES_BY_ACTION.get(action, set())
+        for role in actor.roles:
+            if role.nombre in required:
+                return role.nombre
         return None
 
     # ------------------------------------------------------------------

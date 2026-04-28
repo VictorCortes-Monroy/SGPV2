@@ -28,6 +28,8 @@ Documento de referencia que captura, para cada acción del workflow, **qué la d
 | RN-OWN | Solo el solicitante original puede ejecutar `SUBMIT` y `CANCEL` sobre su SC | 🟢 |
 | RN-ADM | El rol `admin` puede ejecutar cualquier acción (override) | 🟢 |
 | RN-AUDIT | Toda acción registra antes/después de la SC en `audit_log` con actor, rol y comment opcional | 🟢 |
+| RN-COMMENT | Las acciones de rechazo (`REJECT_AREA`, `REJECT_VALORIZATION`, `REJECT_PO`, `REJECT_MANAGEMENT`) y `REGISTER_RECEPTION_NON_CONFORM` exigen `comment` no vacío | 🟢 |
+| RN-SCOPE | El rol que autoriza al actor debe estar vinculado a la empresa de la SC (o ser global, `empresa_id IS NULL`, en `usuarios_roles`) | 🟢 |
 
 ---
 
@@ -39,6 +41,7 @@ Condiciones que la SC debe cumplir para crearse o avanzar de estado.
 |---|---|---|---|
 | RN-DAT-1 | La SC NO requiere `justificacion` para ser enviada (campo opcional) | crear / `SUBMIT` | 🟢 |
 | RN-DAT-2 | La SC debe tener ≥ 1 línea con `item_id` y `cantidad > 0` al crearse | crear | 🟢 — `SolicitudCompraCreate.lineas: Field(..., min_length=1)` + `cantidad: Field(..., gt=0)` |
+| RN-DAT-3 | `fecha_requerida` no puede ser anterior a hoy | crear | 🟢 — Pydantic `field_validator` |
 | RN-COT-1 | Debe haber ≥ 1 cotización registrada para pasar a `QUOTATION_RECEIVED` | `REGISTER_QUOTATIONS` | 🔴 |
 | RN-VAL-1 | La cotización ganadora debe tener `proveedor.rut` y `proveedor.nombre` antes de `SEND_VALORIZATION` | `SEND_VALORIZATION` | 🔴 |
 
@@ -132,9 +135,8 @@ Para cada acción: `nombre — estado_origen → estado_destino  ESTADO_IMPL`
 
 #### `REJECT_AREA` — PENDING_AREA_APPROVAL → REJECTED  🟢
 - **Quién:** `jefe_area`
-- **Pre:** ninguna
+- **Pre:** **RN-COMMENT** — `comment` no vacío 🟢
 - **Efecto:** SC queda en estado terminal; audit_log "REJECT_AREA"
-- **Notas:** se recomienda exigir `comment` no vacío (🔴 falta validación).
 
 #### `RELEASE_BUDGET` — PENDING_BUDGET → {PENDING_QUOTATION | PENDING_MANAGEMENT_APPROVAL}  🟡
 - **Quién:** `finanzas`
@@ -150,11 +152,10 @@ Para cada acción: `nombre — estado_origen → estado_destino  ESTADO_IMPL`
 - **Efecto:** audit_log "APPROVE_MANAGEMENT"; opcional `sc.approved_by_management_id = actor.id` (campo nuevo)
 - **Notas:** aprobación gerencial **temprana**, antes de gastar tiempo cotizando. Distinta de `APPROVE_PO` (que sigue al final como aprobación formal de la OC).
 
-#### `REJECT_MANAGEMENT` — PENDING_MANAGEMENT_APPROVAL → REJECTED  🔴
+#### `REJECT_MANAGEMENT` — PENDING_MANAGEMENT_APPROVAL → REJECTED  🟢
 - **Quién:** `gerencia`
-- **Pre:** ninguna
+- **Pre:** **RN-COMMENT** — `comment` no vacío 🟢
 - **Efecto:** SC terminal; audit_log "REJECT_MANAGEMENT"
-- **Notas:** debería exigir `comment` no vacío.
 
 #### `FREEZE_BUDGET` — PENDING_BUDGET → BUDGET_FROZEN  🟢
 - **Quién:** `finanzas`
@@ -200,7 +201,7 @@ Para cada acción: `nombre — estado_origen → estado_destino  ESTADO_IMPL`
 
 #### `REJECT_VALORIZATION` — PENDING_VALORIZATION → REJECTED  🟢
 - **Quién:** `jefe_area`
-- **Pre:** ninguna
+- **Pre:** **RN-COMMENT** — `comment` no vacío 🟢
 - **Efecto:** SC terminal; audit_log "REJECT_VALORIZATION"
 
 ---
@@ -222,7 +223,7 @@ Para cada acción: `nombre — estado_origen → estado_destino  ESTADO_IMPL`
 
 #### `REJECT_PO` — PENDING_PO_APPROVAL → REJECTED  🟢
 - **Quién:** `gerencia`
-- **Pre:** ninguna
+- **Pre:** **RN-COMMENT** — `comment` no vacío 🟢
 - **Efecto:** SC terminal; audit_log "REJECT_PO"
 
 #### `SEND_PO_TO_SUPPLIER` — PO_APPROVED → PO_SENT_TO_SUPPLIER  🟢
@@ -248,9 +249,9 @@ Para cada acción: `nombre — estado_origen → estado_destino  ESTADO_IMPL`
 
 #### `REGISTER_RECEPTION_NON_CONFORM` — PENDING_RECEPTION → NON_CONFORMING  🟢
 - **Quién:** `bodega`, `solicitante`
-- **Pre:** ninguna
+- **Pre:** **RN-COMMENT** — `comment` no vacío con motivo 🟢
 - **Efecto:** SC terminal (no-conforme); audit_log
-- **Notas:** 🔴 debería exigir `comment` con motivo. Estado actual NON_CONFORMING es terminal sin reapertura — confirmar con negocio si debería poder reabrirse para reclamo.
+- **Notas:** estado actual NON_CONFORMING es terminal sin reapertura — confirmar con negocio si debería poder reabrirse para reclamo.
 
 ---
 
