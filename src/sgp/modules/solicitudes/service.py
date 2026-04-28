@@ -211,6 +211,60 @@ class SolicitudCompraService:
         return sc
 
     # ------------------------------------------------------------------
+    # Duplicación (anti-fricción para nuevas SCs basadas en una previa)
+    # ------------------------------------------------------------------
+    async def duplicate(
+        self, source_id: int, solicitante: Usuario, *, fecha_requerida: "date | None" = None
+    ) -> SolicitudCompra:
+        """Crea una nueva SC en DRAFT clonando los campos y líneas de `source_id`.
+
+        El `solicitante` queda como dueño de la copia (puede ser distinto del
+        original). Se asigna nuevo `numero`, fechas frescas y monto recalculado.
+        Si `fecha_requerida` no se pasa, se usa la del original (validada por
+        Pydantic al construir el payload).
+        """
+        from datetime import date as _date
+
+        source = await self.repo.get(source_id)
+        if not source:
+            raise NotFoundError(f"SC {source_id} no encontrada para duplicar")
+
+        target_fecha = fecha_requerida or source.fecha_requerida
+        if target_fecha < _date.today():
+            target_fecha = _date.today()
+
+        from sgp.modules.solicitudes.schemas import LineaCreate, SolicitudCompraCreate
+
+        payload = SolicitudCompraCreate(
+            empresa_id=source.empresa_id,
+            centro_costo_id=source.centro_costo_id,
+            tipo=source.tipo,
+            urgencia=source.urgencia,
+            descripcion=source.descripcion,
+            justificacion=source.justificacion,
+            fecha_requerida=target_fecha,
+            lineas=[
+                LineaCreate(
+                    item_id=l.item_id,
+                    cantidad=l.cantidad,
+                    especificacion=l.especificacion,
+                )
+                for l in source.lineas
+            ],
+        )
+        new_sc = await self.create(payload, solicitante)
+
+        await self.audit.log(
+            entity_type="solicitud_compra",
+            entity_id=new_sc.id,
+            action="DUPLICATE",
+            actor_id=solicitante.id,
+            after=new_sc.snapshot(),
+            comment=f"Duplicada desde SC {source.numero} (id={source.id})",
+        )
+        return new_sc
+
+    # ------------------------------------------------------------------
     # Validaciones de payload
     # ------------------------------------------------------------------
     @staticmethod

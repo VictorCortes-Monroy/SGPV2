@@ -775,3 +775,151 @@ class TestRepositoryFiltros:
         year = sc.numero.split("-")[1]
         scs = await repo.list_(numero=year)
         assert sc.id in {s.id for s in scs}
+
+    async def test_filtro_item_id(self, db_session, setup_basico, payload_sc):
+        """SCs con líneas que referencian el item_id."""
+        from sgp.modules.catalogo.models import CatalogoItem, Criticidad, UnidadMedida
+        from sgp.modules.solicitudes.repository import SolicitudCompraRepository
+
+        # Segundo item del catálogo
+        otro_item = CatalogoItem(
+            sku="ITM-OTRO",
+            nombre="Otro item",
+            familia_id=setup_basico["item"].familia_id,
+            unidad_medida=UnidadMedida.UN,
+            precio_referencia=Decimal("5000"),
+            criticidad=Criticidad.ESTANDAR,
+        )
+        db_session.add(otro_item)
+        await db_session.flush()
+
+        service = SolicitudCompraService(db_session)
+        # SC1 con item de setup_basico
+        sc1 = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        # SC2 con otro_item
+        payload_otro = SolicitudCompraCreate(
+            empresa_id=setup_basico["empresa"].id,
+            centro_costo_id=setup_basico["cc"].id,
+            tipo=TipoCompra.BIEN,
+            urgencia=Urgencia.NORMAL,
+            descripcion="SC con otro item para filtrar",
+            fecha_requerida=date.today() + timedelta(days=15),
+            lineas=[LineaCreate(item_id=otro_item.id, cantidad=Decimal("10"))],
+        )
+        sc2 = await service.create(payload_otro, setup_basico["usuarios"]["u_sol"])
+
+        repo = SolicitudCompraRepository(db_session)
+        scs = await repo.list_(item_id=setup_basico["item"].id)
+        ids = {s.id for s in scs}
+        assert sc1.id in ids
+        assert sc2.id not in ids
+
+    async def test_filtro_q_busca_en_descripcion(self, db_session, setup_basico):
+        """ILIKE sobre descripcion y justificacion."""
+        from sgp.modules.solicitudes.repository import SolicitudCompraRepository
+
+        service = SolicitudCompraService(db_session)
+        actor = setup_basico["usuarios"]["u_sol"]
+
+        p1 = SolicitudCompraCreate(
+            empresa_id=setup_basico["empresa"].id,
+            centro_costo_id=setup_basico["cc"].id,
+            tipo=TipoCompra.BIEN,
+            urgencia=Urgencia.NORMAL,
+            descripcion="Compra de aceite hidráulico para excavadora",
+            fecha_requerida=date.today() + timedelta(days=10),
+            lineas=[LineaCreate(item_id=setup_basico["item"].id, cantidad=Decimal("5"))],
+        )
+        p2 = SolicitudCompraCreate(
+            empresa_id=setup_basico["empresa"].id,
+            centro_costo_id=setup_basico["cc"].id,
+            tipo=TipoCompra.BIEN,
+            urgencia=Urgencia.NORMAL,
+            descripcion="Repuestos motor diesel para camión",
+            fecha_requerida=date.today() + timedelta(days=10),
+            lineas=[LineaCreate(item_id=setup_basico["item"].id, cantidad=Decimal("5"))],
+        )
+        sc1 = await service.create(p1, actor)
+        sc2 = await service.create(p2, actor)
+
+        repo = SolicitudCompraRepository(db_session)
+        scs = await repo.list_(q="aceite")
+        ids = {s.id for s in scs}
+        assert sc1.id in ids
+        assert sc2.id not in ids
+
+
+class TestDuplicateSC:
+    """Endpoint y servicio de duplicación: clonar una SC pasada como punto
+    de partida (queda en DRAFT, listo para editar y SUBMIT)."""
+
+    async def test_duplicate_clona_lineas_y_campos(
+        self, db_session, setup_basico, payload_sc
+    ):
+        service = SolicitudCompraService(db_session)
+        original = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        original_id = original.id
+        original_numero = original.numero
+        original_lineas = len(original.lineas)
+
+        copia = await service.duplicate(original_id, setup_basico["usuarios"]["u_sol"])
+
+        assert copia.id != original_id
+        assert copia.numero != original_numero
+        assert copia.status == SCStatus.DRAFT
+        assert copia.empresa_id == original.empresa_id
+        assert copia.centro_costo_id == original.centro_costo_id
+        assert copia.descripcion == original.descripcion
+        assert len(copia.lineas) == original_lineas
+
+    async def test_duplicate_audit_log_referencia_origen(
+        self, db_session, setup_basico, payload_sc
+    ):
+        service = SolicitudCompraService(db_session)
+        original = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        copia = await service.duplicate(original.id, setup_basico["usuarios"]["u_sol"])
+
+        result = await db_session.execute(
+            select(AuditLog)
+            .where(AuditLog.entity_id == str(copia.id), AuditLog.action == "DUPLICATE")
+        )
+        log = result.scalar_one()
+        assert original.numero in (log.comment or "")
+
+    async def test_duplicate_de_inexistente_lanza_404(
+        self, db_session, setup_basico
+    ):
+        from sgp.core.exceptions import NotFoundError
+
+        service = SolicitudCompraService(db_session)
+        with pytest.raises(NotFoundError):
+            await service.duplicate(99999, setup_basico["usuarios"]["u_sol"])
+
+    async def test_duplicate_corrige_fecha_si_la_original_ya_paso(
+        self, db_session, setup_basico
+    ):
+        """Si la SC original tenía fecha_requerida pasada (ej. SC cerrada
+        hace meses), la copia usa hoy en vez de heredar una fecha vencida."""
+        from sgp.modules.solicitudes.models import SolicitudCompra
+
+        # Crear SC normal y luego forzar fecha pasada en la BD para simular
+        # una SC histórica
+        service = SolicitudCompraService(db_session)
+        original = await service.create(
+            SolicitudCompraCreate(
+                empresa_id=setup_basico["empresa"].id,
+                centro_costo_id=setup_basico["cc"].id,
+                tipo=TipoCompra.BIEN,
+                urgencia=Urgencia.NORMAL,
+                descripcion="SC histórica que cerró hace tiempo",
+                fecha_requerida=date.today() + timedelta(days=1),
+                lineas=[LineaCreate(item_id=setup_basico["item"].id, cantidad=Decimal("1"))],
+            ),
+            setup_basico["usuarios"]["u_sol"],
+        )
+        # Backdate manual
+        original.fecha_requerida = date.today() - timedelta(days=30)
+        await db_session.flush()
+
+        copia = await service.duplicate(original.id, setup_basico["usuarios"]["u_sol"])
+        assert copia.fecha_requerida == date.today()

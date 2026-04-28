@@ -82,7 +82,11 @@ async def list_solicitudes(  # noqa: PLR0913 — filtros HTTP, todos opcionales
     fecha_hasta: date | None = Query(None, description="fecha_requerida <= (incluido)"),
     monto_min: Decimal | None = Query(None, ge=0, description="monto_estimado >= (incluido)"),
     monto_max: Decimal | None = Query(None, ge=0, description="monto_estimado <= (incluido)"),
-    numero: str | None = Query(None, description="Búsqueda por substring del número de SC"),
+    numero: str | None = Query(None, description="Substring del número de SC"),
+    item_id: int | None = Query(None, gt=0, description="Solo SCs con líneas de este item"),
+    q: str | None = Query(
+        None, description="Búsqueda libre en descripción y justificación (ILIKE)"
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -99,6 +103,8 @@ async def list_solicitudes(  # noqa: PLR0913 — filtros HTTP, todos opcionales
         monto_min=monto_min,
         monto_max=monto_max,
         numero=numero,
+        item_id=item_id,
+        q=q,
         limit=limit,
         offset=offset,
     )
@@ -134,3 +140,25 @@ async def apply_transition(
     service = SolicitudCompraService(db)
     sc = await service.apply_transition(sc_id, request, user)
     return _serialize_sc(sc)
+
+
+@router.post("/{sc_id}/duplicate", response_model=SolicitudCompraRead, status_code=201)
+async def duplicate_solicitud(
+    sc_id: int,
+    fecha_requerida: date | None = Query(
+        None, description="Si se omite, usa la del original (o hoy si la del original ya pasó)"
+    ),
+    db: AsyncSession = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    """Crea una nueva SC en DRAFT clonando los campos y líneas de `sc_id`.
+
+    El usuario actual queda como solicitante de la copia. Sirve para
+    "usar como plantilla" — el solicitante puede partir de una compra
+    pasada y editar el draft antes de hacer SUBMIT.
+    """
+    service = SolicitudCompraService(db)
+    new_sc = await service.duplicate(sc_id, user, fecha_requerida=fecha_requerida)
+    repo = SolicitudCompraRepository(db)
+    sc_full = await repo.get(new_sc.id)
+    return _serialize_sc(sc_full)
