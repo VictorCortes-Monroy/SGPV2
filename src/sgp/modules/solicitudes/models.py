@@ -54,9 +54,19 @@ class SolicitudCompra(Base, TimestampMixin):
     monto_estimado: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     fecha_requerida: Mapped[date] = mapped_column(Date, nullable=False)
 
-    # Estado del workflow
+    # Estado del workflow.
+    # values_callable: el enum nativo de Postgres se creó con los .value (minúsculas)
+    # en la migración. Por defecto SQLAlchemy serializa por .name (mayúsculas), que
+    # no coincide con el enum de la BD. Forzamos a usar el .value para alinear.
     status: Mapped[SCStatus] = mapped_column(
-        Enum(SCStatus, name="sc_status_enum"), default=SCStatus.DRAFT, nullable=False, index=True
+        Enum(
+            SCStatus,
+            name="sc_status_enum",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        default=SCStatus.DRAFT,
+        nullable=False,
+        index=True,
     )
     recotization_cycles: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

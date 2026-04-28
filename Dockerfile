@@ -15,16 +15,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Instalar dependencias primero (mejor cache de Docker)
+# Copiar pyproject.toml + src para que hatchling encuentre el paquete
+# en el editable install. Si solo cambia src/ sin tocar pyproject.toml,
+# el cache de la capa de pip se reutiliza salvo el reinstall.
 COPY pyproject.toml ./
+COPY src/ ./src/
 RUN pip install --upgrade pip && \
     pip install -e ".[dev]"
 
-# Copiar código
-COPY src/ ./src/
+# Resto del código
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 COPY scripts/ ./scripts/
+COPY tests/ ./tests/
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
