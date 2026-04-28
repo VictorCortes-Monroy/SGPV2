@@ -36,6 +36,11 @@ class SolicitudAdjunto(Base, TimestampMixin):
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
 
+    # Estado de la SC al momento de subir el adjunto (RN-ADJ-3).
+    # Permite al aprobador filtrar/agrupar documentos por fase del workflow.
+    # Se guarda como string para no acoplar la tabla al enum sc_status_enum.
+    phase_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
     # Soft-delete: cuando se borra el adjunto el archivo se elimina del disco
     # pero la fila queda con timestamp (auditoría / forense).
     deleted_at: Mapped[datetime | None] = mapped_column(

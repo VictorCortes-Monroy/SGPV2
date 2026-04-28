@@ -349,6 +349,44 @@ class TestSoftDelete:
             await service.get_with_sc(adjunto.id)
 
 
+class TestPhaseStatus:
+    """RN-ADJ-3: cada adjunto guarda el `status` de la SC al momento de subirlo,
+    para que el aprobador agrupe documentos por fase."""
+
+    async def test_upload_en_draft_captura_phase_draft(
+        self, db_session, setup_basico, tmp_storage
+    ):
+        sc_id = await _crear_sc_en_draft(db_session, setup_basico)
+        service = AdjuntosService(db_session, storage=tmp_storage)
+        adjunto = await service.upload(
+            sc_id=sc_id,
+            actor=setup_basico["usuarios"]["u_sol"],
+            filename="cot.pdf",
+            content_type="application/pdf",
+            content=PDF_CONTENT,
+        )
+        assert adjunto.phase_status == SCStatus.DRAFT.value
+
+    async def test_upload_tras_submit_captura_pending_area(
+        self, db_session, setup_basico, tmp_storage
+    ):
+        sc_id = await _crear_sc_en_draft(db_session, setup_basico)
+        sc_service = SolicitudCompraService(db_session)
+        await sc_service.apply_transition(
+            sc_id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+        # Ahora SC está en PENDING_AREA_APPROVAL → assignee jefe
+        service = AdjuntosService(db_session, storage=tmp_storage)
+        adjunto = await service.upload(
+            sc_id=sc_id,
+            actor=setup_basico["usuarios"]["u_jefe"],
+            filename="aprobacion.pdf",
+            content_type="application/pdf",
+            content=PDF_CONTENT,
+        )
+        assert adjunto.phase_status == SCStatus.PENDING_AREA_APPROVAL.value
+
+
 class TestStorage:
     """Tests directos del storage adapter."""
 

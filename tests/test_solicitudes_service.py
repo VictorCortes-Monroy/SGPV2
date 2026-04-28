@@ -552,6 +552,50 @@ class TestSLAyAssignee:
         assert sc.current_assignee_role == "abastecimiento"
 
 
+class TestSolicitudCompraReadEmbedAdjuntos:
+    """El schema de detalle expone `adjuntos` embebidos, así el aprobador
+    no necesita hacer una llamada extra para ver la evidencia."""
+
+    async def test_schema_acepta_lista_de_adjuntos(self, setup_basico):
+        """SolicitudCompraRead acepta el campo `adjuntos` y lo serializa OK."""
+        from sgp.modules.adjuntos.schemas import AdjuntoRead
+        from datetime import UTC, datetime
+        from sgp.modules.solicitudes.schemas import SolicitudCompraRead
+
+        adj = AdjuntoRead(
+            id=1,
+            solicitud_id=10,
+            uploaded_by_id=2,
+            filename="x.pdf",
+            content_type="application/pdf",
+            size_bytes=100,
+            phase_status="draft",
+            created_at=datetime.now(UTC),
+        )
+        sc_read = SolicitudCompraRead(
+            id=10,
+            numero="SC-2026-000001",
+            empresa_id=1,
+            centro_costo_id=1,
+            solicitante_id=2,
+            tipo=TipoCompra.BIEN,
+            urgencia=Urgencia.NORMAL,
+            descripcion="Test",
+            justificacion=None,
+            monto_estimado=Decimal("1000"),
+            fecha_requerida=date.today() + timedelta(days=5),
+            status=SCStatus.DRAFT,
+            recotization_cycles=0,
+            current_assignee_role="solicitante",
+            expected_resolution_at=None,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            adjuntos=[adj],
+        )
+        assert len(sc_read.adjuntos) == 1
+        assert sc_read.adjuntos[0].phase_status == "draft"
+
+
 class TestRefinamientosSolicitudes:
     """Tests para los 4 refinamientos del módulo:
     1. Comments obligatorios en rechazos.

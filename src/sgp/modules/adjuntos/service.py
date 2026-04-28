@@ -99,6 +99,7 @@ class AdjuntosService:
             stored_path="",  # placeholder; se actualiza tras persistir
             content_type=content_type,
             size_bytes=len(content),
+            phase_status=sc.status.value,  # snapshot de la fase actual (RN-ADJ-3)
         )
         self.db.add(adjunto)
         await self.db.flush()  # obtiene adjunto.id

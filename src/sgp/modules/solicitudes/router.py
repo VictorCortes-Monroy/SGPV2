@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sgp.core.auth import get_current_user
 from sgp.core.database import get_db
+from sgp.modules.adjuntos.schemas import AdjuntoRead
+from sgp.modules.adjuntos.service import AdjuntosService
 from sgp.modules.solicitudes.repository import SolicitudCompraRepository
 from sgp.modules.solicitudes.schemas import (
     LineaRead,
@@ -22,8 +24,10 @@ from sgp.modules.usuarios.models import Usuario
 router = APIRouter(prefix="/solicitudes", tags=["solicitudes"])
 
 
-def _serialize_sc(sc) -> SolicitudCompraRead:
-    """Convierte SC ORM → SolicitudCompraRead enriquecido con líneas y acciones disponibles."""
+def _serialize_sc(sc, *, adjuntos: list | None = None) -> SolicitudCompraRead:
+    """Convierte SC ORM → SolicitudCompraRead enriquecido con líneas, adjuntos
+    y acciones disponibles. `adjuntos` debe pasarse explícitamente: el detail
+    endpoint los carga, el list los omite (evita N+1)."""
     return SolicitudCompraRead(
         id=sc.id,
         numero=sc.numero,
@@ -53,6 +57,7 @@ def _serialize_sc(sc) -> SolicitudCompraRead:
             )
             for l in sc.lineas
         ],
+        adjuntos=[AdjuntoRead.model_validate(a) for a in (adjuntos or [])],
         available_actions=available_actions(sc.status),
     )
 
@@ -122,7 +127,9 @@ async def get_solicitud(
     if not sc:
         from sgp.core.exceptions import NotFoundError
         raise NotFoundError(f"SC {sc_id} no encontrada")
-    return _serialize_sc(sc)
+    # Detail incluye adjuntos vigentes (RN-ADJ); list los omite (N+1).
+    adjuntos = await AdjuntosService(db).list_for_sc(sc.id)
+    return _serialize_sc(sc, adjuntos=adjuntos)
 
 
 @router.post("/{sc_id}/transitions", response_model=SolicitudCompraRead)

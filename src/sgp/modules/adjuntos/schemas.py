@@ -14,4 +14,5 @@ class AdjuntoRead(BaseModel):
     filename: str
     content_type: str
     size_bytes: int
+    phase_status: str | None = None
     created_at: datetime

@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from sgp.modules.adjuntos.schemas import AdjuntoRead
 from sgp.modules.solicitudes.models import TipoCompra, Urgencia
 from sgp.modules.solicitudes.state_machine import SCAction, SCStatus
 
@@ -78,6 +79,7 @@ class SolicitudCompraRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     lineas: list[LineaRead] = []
+    adjuntos: list[AdjuntoRead] = []  # poblado solo en endpoints de detalle
     available_actions: list[SCAction] = []
 
 
