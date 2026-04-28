@@ -14,9 +14,11 @@ import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-# Forzar SQLite ANTES de importar la app
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
-os.environ["AUTH_MODE"] = "mock"
+# Por defecto SQLite ANTES de importar la app. setdefault para que la suite
+# de integración (tests/integration/) pueda inyectar un DATABASE_URL de
+# Postgres desde el entorno sin que esto lo pise.
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault("AUTH_MODE", "mock")
 
 # Path src/
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))

@@ -56,6 +56,9 @@ ignore = ["E501"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "postgres: smoke tests que requieren Postgres real (skip si DATABASE_URL no es Postgres)",
+]
 
 [tool.mypy]
 python_version = "3.12"

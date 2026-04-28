@@ -304,9 +304,13 @@ curl -s -H "X-User-Id: user_victor" \
 
 ## Testing
 
+La suite tiene dos capas:
+
+### Capa 1: Tests unitarios (SQLite, rápidos)
+
 ```bash
-# Correr todos los tests (33 tests, ~1 segundo)
-pytest
+# Default: corre solo los unitarios (33 tests, ~1 segundo)
+pytest -m "not postgres"
 
 # Solo state machine
 pytest tests/test_state_machine.py -v
@@ -315,14 +319,47 @@ pytest tests/test_state_machine.py -v
 pytest tests/test_solicitudes_service.py -v
 
 # Con cobertura
-pytest --cov=src/sgp --cov-report=html
+pytest -m "not postgres" --cov=src/sgp --cov-report=html
 ```
 
-**Cobertura de los tests:**
-- 25 tests del state machine: validación de transiciones, estados terminales, coherencia interna del mapa, camino feliz completo
-- 8 tests de integración del service: creación, transiciones, permisos por rol, regla RN8 de recotización, audit log
+Usan **SQLite en memoria** vía `aiosqlite`. Cubren state machine (transiciones,
+estados terminales, coherencia del mapa) y service (creación, permisos por rol,
+RN8 recotización, audit log).
 
-Los tests usan **SQLite en memoria** vía `aiosqlite`. El trigger PL/pgSQL del audit_log no se aplica en SQLite (es Postgres-específico) — para validar inmutabilidad real, correr contra Postgres.
+### Capa 2: Smoke tests contra Postgres (integración)
+
+```bash
+# Con docker compose ya corriendo:
+docker compose exec api pytest -m postgres -v
+
+# O standalone, exportando DATABASE_URL:
+export DATABASE_URL=postgresql+asyncpg://sgp:sgp_dev_password@localhost:5432/sgp_dev
+pytest -m postgres -v
+```
+
+Los smoke tests (`tests/integration/`) atrapan bugs específicos del dialecto que
+SQLite no detecta:
+
+- Mismatch entre el enum nativo de Postgres y los enums de Python (un bug real
+  ocurrido: SQLAlchemy serializa por `.name` mayúsculas pero el enum de la BD
+  tiene los `.value` minúsculas).
+- Trigger PL/pgSQL `prevent_audit_log_modification` (RN5: `audit_log` append-only).
+
+Si `DATABASE_URL` no apunta a Postgres, los smoke tests se saltan automáticamente.
+
+### CI
+
+`.github/workflows/tests.yml` corre ambas capas en cada push/PR:
+
+- **Job `unit`**: SQLite, sin servicios, ~10 s.
+- **Job `integration`**: levanta `postgres:16-alpine` como service, aplica
+  migraciones, carga seed, y corre `-m postgres`.
+
+### Correr todo localmente
+
+```bash
+docker compose exec api pytest -v   # 39 tests (33 unit + 6 integration)
+```
 
 ---
 

@@ -33,6 +33,7 @@ services:
       - ./src:/app/src
       - ./alembic:/app/alembic
       - ./scripts:/app/scripts
+      - ./tests:/app/tests
     command: >
       sh -c "alembic upgrade head &&
              python scripts/seed.py &&
