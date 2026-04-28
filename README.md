@@ -112,64 +112,73 @@ sgp-api/
 
 ## Estados del workflow (state machine)
 
-El ciclo de vida de una SC tiene **20 estados** organizados en 6 fases del PRD:
+> Spec canónica con todas las precondiciones, roles y side-effects: [docs/transiciones_sc.md](docs/transiciones_sc.md).
+
+El ciclo de vida de una SC tiene **21 estados** organizados en 6 fases del PRD. El ruteo de **Fase 1** depende del `monto_estimado` de la SC (RN-MONTO):
 
 ```
-                                   ┌── REJECTED (terminal)
-                                   │
 DRAFT ─[submit]→ PENDING_AREA_APPROVAL
-                                   │
-                          [approve_area]
-                                   ↓
-                          PENDING_BUDGET ─[freeze_budget]→ BUDGET_FROZEN
-                                   │
-                         [release_budget]
-                                   ↓
-                         PENDING_QUOTATION ◄──┐
-                                   │          │ [request_recotization] (RN8: máx 2)
-                       [register_quotations]  │
-                                   ↓          │
-                         QUOTATION_RECEIVED   │
-                                   │          │
-                          [send_valorization] │
-                                   ↓          │
-                         PENDING_VALORIZATION ┘
-                                   │
-                         [approve_valorization]
-                                   ↓
-                       VALORIZATION_APPROVED
-                                   │
-                              [emit_po]
-                                   ↓
-                         PENDING_PO_APPROVAL ─[reject_po]→ REJECTED
-                                   │
-                            [approve_po]
-                                   ↓
-                         PO_APPROVED
-                                   │
-                       [send_po_to_supplier]
-                                   ↓
-                         PO_SENT_TO_SUPPLIER
-                                   │
-                  [register_reception_conform]
-                                   ↓
-                          PENDING_RECEPTION ─[non_conform]→ NON_CONFORMING
-                                   │
-                  [register_reception_conform]
-                                   ↓
-                         RECEPTION_CONFORM
-                                   │
-                          [receive_invoice]
-                                   ↓
-                         PENDING_INVOICE
-                                   │
-                       [match_invoice_ok]
-                                   ↓
-                         INVOICE_MATCHED
-                                   │
+                          │
+                   [approve_area]
+                          │
+            ┌─────────────┴─────────────┐
+            │ monto ≤ 1M                │ monto > 1M
+            ↓                           ↓
+            │                    PENDING_BUDGET ─[freeze_budget]→ BUDGET_FROZEN
+            │                           │                              │
+            │                   [release_budget]                [authorize_frozen]
+            │                           │                              │
+            │             ┌─────────────┴─────────────┐                │
+            │             │ monto ≤ 5M                │ monto > 5M     │
+            │             ↓                           ↓                │
+            │             │                  PENDING_MANAGEMENT_APPROVAL
+            │             │                           │
+            │             │                  [approve_management]
+            │             │                           │
+            └────────────►└──────────────────────────►┘
+                                       │
+                                       ↓
+                              PENDING_QUOTATION ◄────────────────┐
+                                       │                         │
+                              [register_quotations]              │ [request_recotization]
+                                       ↓                         │ (RN8: máx 2)
+                              QUOTATION_RECEIVED                 │
+                                       │                         │
+                              [send_valorization]                │
+                                       ↓                         │
+                              PENDING_VALORIZATION ──────────────┘
+                                       │
+                              [approve_valorization]
+                                       ↓
+                              VALORIZATION_APPROVED
+                                       │
+                              [emit_po]  ← RN-MONTO-5: re-valida matriz vs cotizado
+                                       ↓
+                              PENDING_PO_APPROVAL ─[reject_po]→ REJECTED
+                                       │
+                              [approve_po]
+                                       ↓
+                              PO_APPROVED ─[send_po_to_supplier]→ PO_SENT_TO_SUPPLIER
+                                       │
+                              [register_reception_conform]
+                                       ↓
+                              PENDING_RECEPTION ─[non_conform]→ NON_CONFORMING
+                                       │
+                              [register_reception_conform]
+                                       ↓
+                              RECEPTION_CONFORM
+                                       │
+                              [receive_invoice]
+                                       ↓
+                              PENDING_INVOICE
+                                       │
+                              [match_invoice_ok]
+                                       ↓
+                              INVOICE_MATCHED
+                                       │
                               [close]
-                                   ↓
-                            CLOSED ✓
+                                       ↓
+                                    CLOSED ✓
 ```
 
 El módulo `state_machine.py` define:
@@ -183,6 +192,7 @@ El módulo `state_machine.py` define:
 **Reglas de negocio implementadas:**
 - **RN5 (Auditoría inmutable):** trigger PL/pgSQL en migración bloquea UPDATE/DELETE en `audit_log`
 - **RN8 (Recotización máxima):** 2 ciclos antes de exigir aprobación gerencial extra
+- **RN-MONTO (Matriz de aprobación por monto):** ≤ 1M jefe_area; > 1M agrega finanzas; > 5M agrega gerencia (estado temprano `PENDING_MANAGEMENT_APPROVAL`). Ver detalles en [docs/transiciones_sc.md](docs/transiciones_sc.md#rn-monto--matriz-de-aprobación-por-monto-).
 
 ---
 

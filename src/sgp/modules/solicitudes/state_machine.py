@@ -8,16 +8,26 @@ Diseño:
     - SCStatus: enum con todos los estados posibles
     - SCAction: enum con todas las acciones que disparan transiciones
     - ALLOWED_TRANSITIONS: mapa estado → estados destino válidos
-    - TRANSITION_BY_ACTION: mapa (estado, acción) → estado destino
+    - TRANSITION_BY_ACTION: mapa (estado, acción) → estado destino (estático)
+    - CONDITIONAL_ROUTES: mapa (estado, acción) → función router(monto) → destino
+      para los casos donde el destino depende del monto de la SC (RN-MONTO).
 
 Las acciones son lo que el usuario hace; el estado es donde queda la SC
 después de la acción. Esta separación permite que el frontend exponga
 acciones en lugar de estados crudos.
+
+Ver `docs/transiciones_sc.md` para la spec canónica.
 """
 
 import enum
+from collections.abc import Callable
+from decimal import Decimal
 
 from sgp.core.exceptions import InvalidTransitionError
+
+# RN-MONTO — umbrales de la matriz de aprobación (CLP)
+MONTO_TIER_FINANZAS = Decimal("1000000")   # > este monto requiere finanzas
+MONTO_TIER_GERENCIA = Decimal("5000000")   # > este monto requiere gerencia (early)
 
 
 class SCStatus(str, enum.Enum):
@@ -31,6 +41,7 @@ class SCStatus(str, enum.Enum):
     PENDING_AREA_APPROVAL = "pending_area_approval"
     PENDING_BUDGET = "pending_budget"
     BUDGET_FROZEN = "budget_frozen"
+    PENDING_MANAGEMENT_APPROVAL = "pending_management_approval"  # RN-MONTO: > 5M
 
     # --- Fase 2: Cotización ---
     PENDING_QUOTATION = "pending_quotation"
@@ -75,6 +86,8 @@ class SCAction(str, enum.Enum):
     RELEASE_BUDGET = "release_budget"              # Finanzas libera presupuesto
     FREEZE_BUDGET = "freeze_budget"                # Finanzas congela por falta de presupuesto
     AUTHORIZE_FROZEN = "authorize_frozen"          # Autorización superior libera congelada
+    APPROVE_MANAGEMENT = "approve_management"      # Gerencia aprueba (RN-MONTO: > 5M)
+    REJECT_MANAGEMENT = "reject_management"        # Gerencia rechaza (RN-MONTO: > 5M)
 
     # Fase 2 + 3
     REGISTER_QUOTATIONS = "register_quotations"    # Abastecimiento registra cotizaciones
@@ -107,14 +120,21 @@ class SCAction(str, enum.Enum):
 ALLOWED_TRANSITIONS: dict[SCStatus, set[SCStatus]] = {
     SCStatus.DRAFT: {SCStatus.PENDING_AREA_APPROVAL, SCStatus.CANCELLED},
     SCStatus.PENDING_AREA_APPROVAL: {
-        SCStatus.PENDING_BUDGET,
+        SCStatus.PENDING_BUDGET,           # > 1M (RN-MONTO-1)
+        SCStatus.PENDING_QUOTATION,        # ≤ 1M (RN-MONTO-1)
         SCStatus.REJECTED,
-        SCStatus.DRAFT,           # devolución para corrección
+        SCStatus.DRAFT,                    # devolución para corrección
         SCStatus.CANCELLED,
     },
     SCStatus.PENDING_BUDGET: {
-        SCStatus.PENDING_QUOTATION,
+        SCStatus.PENDING_QUOTATION,             # ≤ 5M (RN-MONTO-2)
+        SCStatus.PENDING_MANAGEMENT_APPROVAL,   # > 5M (RN-MONTO-2)
         SCStatus.BUDGET_FROZEN,
+        SCStatus.REJECTED,
+        SCStatus.CANCELLED,
+    },
+    SCStatus.PENDING_MANAGEMENT_APPROVAL: {
+        SCStatus.PENDING_QUOTATION,
         SCStatus.REJECTED,
         SCStatus.CANCELLED,
     },
@@ -183,15 +203,16 @@ ALLOWED_TRANSITIONS: dict[SCStatus, set[SCStatus]] = {
 }
 
 
-# Mapa (estado actual, acción) → estado destino
+# Mapa (estado actual, acción) → estado destino para transiciones SIN dependencia de monto.
+# Las transiciones condicionales por monto viven en CONDITIONAL_ROUTES (más abajo).
 TRANSITION_BY_ACTION: dict[tuple[SCStatus, SCAction], SCStatus] = {
     # Fase 1
     (SCStatus.DRAFT, SCAction.SUBMIT): SCStatus.PENDING_AREA_APPROVAL,
-    (SCStatus.PENDING_AREA_APPROVAL, SCAction.APPROVE_AREA): SCStatus.PENDING_BUDGET,
     (SCStatus.PENDING_AREA_APPROVAL, SCAction.REJECT_AREA): SCStatus.REJECTED,
-    (SCStatus.PENDING_BUDGET, SCAction.RELEASE_BUDGET): SCStatus.PENDING_QUOTATION,
     (SCStatus.PENDING_BUDGET, SCAction.FREEZE_BUDGET): SCStatus.BUDGET_FROZEN,
     (SCStatus.BUDGET_FROZEN, SCAction.AUTHORIZE_FROZEN): SCStatus.PENDING_QUOTATION,
+    (SCStatus.PENDING_MANAGEMENT_APPROVAL, SCAction.APPROVE_MANAGEMENT): SCStatus.PENDING_QUOTATION,
+    (SCStatus.PENDING_MANAGEMENT_APPROVAL, SCAction.REJECT_MANAGEMENT): SCStatus.REJECTED,
 
     # Fase 2 + 3
     (SCStatus.PENDING_QUOTATION, SCAction.REGISTER_QUOTATIONS): SCStatus.QUOTATION_RECEIVED,
@@ -221,11 +242,34 @@ TRANSITION_BY_ACTION: dict[tuple[SCStatus, SCAction], SCStatus] = {
     (SCStatus.PENDING_AREA_APPROVAL, SCAction.CANCEL): SCStatus.CANCELLED,
     (SCStatus.PENDING_BUDGET, SCAction.CANCEL): SCStatus.CANCELLED,
     (SCStatus.BUDGET_FROZEN, SCAction.CANCEL): SCStatus.CANCELLED,
+    (SCStatus.PENDING_MANAGEMENT_APPROVAL, SCAction.CANCEL): SCStatus.CANCELLED,
     (SCStatus.PENDING_QUOTATION, SCAction.CANCEL): SCStatus.CANCELLED,
     (SCStatus.QUOTATION_RECEIVED, SCAction.CANCEL): SCStatus.CANCELLED,
     (SCStatus.PENDING_VALORIZATION, SCAction.CANCEL): SCStatus.CANCELLED,
     (SCStatus.VALORIZATION_APPROVED, SCAction.CANCEL): SCStatus.CANCELLED,
     (SCStatus.PENDING_PO_APPROVAL, SCAction.CANCEL): SCStatus.CANCELLED,
+}
+
+
+# RN-MONTO — Transiciones cuyo destino depende del `monto_estimado` de la SC.
+# El service llama `apply_action(...)` pasando `monto_estimado`; el router decide.
+def _route_approve_area(monto_estimado: Decimal) -> SCStatus:
+    """RN-MONTO-1: ≤ 1M salta finanzas; > 1M pasa por PENDING_BUDGET."""
+    if monto_estimado <= MONTO_TIER_FINANZAS:
+        return SCStatus.PENDING_QUOTATION
+    return SCStatus.PENDING_BUDGET
+
+
+def _route_release_budget(monto_estimado: Decimal) -> SCStatus:
+    """RN-MONTO-2: > 5M requiere aprobación gerencial temprana."""
+    if monto_estimado > MONTO_TIER_GERENCIA:
+        return SCStatus.PENDING_MANAGEMENT_APPROVAL
+    return SCStatus.PENDING_QUOTATION
+
+
+CONDITIONAL_ROUTES: dict[tuple[SCStatus, SCAction], Callable[[Decimal], SCStatus]] = {
+    (SCStatus.PENDING_AREA_APPROVAL, SCAction.APPROVE_AREA): _route_approve_area,
+    (SCStatus.PENDING_BUDGET, SCAction.RELEASE_BUDGET): _route_release_budget,
 }
 
 
@@ -240,16 +284,31 @@ def validate_transition(from_status: SCStatus, to_status: SCStatus) -> None:
         )
 
 
-def apply_action(current_status: SCStatus, action: SCAction) -> SCStatus:
+def apply_action(
+    current_status: SCStatus,
+    action: SCAction,
+    *,
+    monto_estimado: Decimal | None = None,
+) -> SCStatus:
     """Aplica una acción y devuelve el nuevo estado.
 
-    Combina la búsqueda de la transición esperada y la validación.
+    Para acciones cuyo destino depende del monto (CONDITIONAL_ROUTES, RN-MONTO),
+    `monto_estimado` es obligatorio. Para el resto se ignora.
     """
-    new_status = TRANSITION_BY_ACTION.get((current_status, action))
+    key = (current_status, action)
+
+    if key in CONDITIONAL_ROUTES:
+        if monto_estimado is None:
+            raise ValueError(
+                f"La acción '{action.value}' desde '{current_status.value}' tiene "
+                "ruteo condicional por monto (RN-MONTO) y requiere `monto_estimado`."
+            )
+        new_status = CONDITIONAL_ROUTES[key](monto_estimado)
+    else:
+        new_status = TRANSITION_BY_ACTION.get(key)
+
     if new_status is None:
-        valid_actions = [
-            a.value for (s, a) in TRANSITION_BY_ACTION if s == current_status
-        ]
+        valid_actions = sorted(_actions_from_status(current_status, by_value=True))
         raise InvalidTransitionError(
             f"Acción '{action.value}' no aplicable en estado '{current_status.value}'. "
             f"Acciones válidas en este estado: {valid_actions}"
@@ -266,6 +325,19 @@ def is_terminal(status: SCStatus) -> bool:
 def available_actions(current_status: SCStatus) -> list[SCAction]:
     """Devuelve las acciones disponibles desde el estado actual.
 
-    Útil para que el frontend muestre solo los botones válidos.
+    Útil para que el frontend muestre solo los botones válidos. Incluye
+    tanto las transiciones estáticas como las condicionales por monto.
     """
-    return [a for (s, a) in TRANSITION_BY_ACTION if s == current_status]
+    return list(_actions_from_status(current_status))
+
+
+def _actions_from_status(
+    current_status: SCStatus, *, by_value: bool = False
+) -> list[SCAction] | list[str]:
+    """Helper interno: enumera acciones disponibles uniendo static + conditional."""
+    static = [a for (s, a) in TRANSITION_BY_ACTION if s == current_status]
+    conditional = [a for (s, a) in CONDITIONAL_ROUTES if s == current_status]
+    actions = static + conditional
+    if by_value:
+        return [a.value for a in actions]
+    return actions

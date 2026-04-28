@@ -107,8 +107,7 @@ async def setup_basico(db_session):
     }
 
 
-@pytest.fixture
-def payload_sc(setup_basico):
+def _build_payload(setup_basico, monto: Decimal) -> SolicitudCompraCreate:
     return SolicitudCompraCreate(
         empresa_id=setup_basico["empresa"].id,
         centro_costo_id=setup_basico["cc"].id,
@@ -116,10 +115,29 @@ def payload_sc(setup_basico):
         urgencia=Urgencia.NORMAL,
         descripcion="Compra de repuesto crítico para mantención preventiva",
         justificacion="Mantención programada de equipo CAT 320",
-        monto_estimado=Decimal("150000"),
+        monto_estimado=monto,
         fecha_requerida=date.today() + timedelta(days=30),
         lineas=[LineaCreate(item_id=setup_basico["item"].id, cantidad=Decimal("3"))],
     )
+
+
+@pytest.fixture
+def payload_sc(setup_basico):
+    """Payload por defecto: monto del tramo medio (1M < x ≤ 5M)
+    para ejercer el flujo APPROVE_AREA → PENDING_BUDGET → PENDING_QUOTATION."""
+    return _build_payload(setup_basico, Decimal("3000000"))
+
+
+@pytest.fixture
+def payload_sc_bajo(setup_basico):
+    """Tramo bajo (≤ 1M): APPROVE_AREA salta directo a PENDING_QUOTATION."""
+    return _build_payload(setup_basico, Decimal("500000"))
+
+
+@pytest.fixture
+def payload_sc_alto(setup_basico):
+    """Tramo alto (> 5M): pasa por finanzas + gerencia (PENDING_MANAGEMENT_APPROVAL)."""
+    return _build_payload(setup_basico, Decimal("8000000"))
 
 
 class TestCreacionSC:
@@ -265,6 +283,83 @@ class TestRecotizacion:
                 TransitionRequest(action=SCAction.REQUEST_RECOTIZATION),
                 setup_basico["usuarios"]["u_jefe"],
             )
+
+
+class TestRNMontoFlujoPorTramo:
+    """Verifica que el ruteo condicional por monto (RN-MONTO) se aplique
+    correctamente desde el service layer, end-to-end."""
+
+    async def test_tramo_bajo_salta_pending_budget(
+        self, db_session, setup_basico, payload_sc_bajo
+    ):
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc_bajo, setup_basico["usuarios"]["u_sol"])
+        await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+        sc = await service.apply_transition(
+            sc.id,
+            TransitionRequest(action=SCAction.APPROVE_AREA),
+            setup_basico["usuarios"]["u_jefe"],
+        )
+        # Tramo bajo: salta finanzas
+        assert sc.status == SCStatus.PENDING_QUOTATION
+
+    async def test_tramo_alto_requiere_aprobacion_gerencial_temprana(
+        self, db_session, setup_basico, payload_sc_alto
+    ):
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc_alto, setup_basico["usuarios"]["u_sol"])
+
+        for action, actor_key in [
+            (SCAction.SUBMIT, "u_sol"),
+            (SCAction.APPROVE_AREA, "u_jefe"),
+            (SCAction.RELEASE_BUDGET, "u_fin"),
+        ]:
+            sc = await service.apply_transition(
+                sc.id, TransitionRequest(action=action), setup_basico["usuarios"][actor_key]
+            )
+
+        # > 5M: tras finanzas debe quedar esperando a gerencia
+        assert sc.status == SCStatus.PENDING_MANAGEMENT_APPROVAL
+
+        # Solo gerencia puede aprobar
+        with pytest.raises(PermissionDenied):
+            await service.apply_transition(
+                sc.id,
+                TransitionRequest(action=SCAction.APPROVE_MANAGEMENT),
+                setup_basico["usuarios"]["u_fin"],
+            )
+
+        sc = await service.apply_transition(
+            sc.id,
+            TransitionRequest(action=SCAction.APPROVE_MANAGEMENT, comment="OK gerencia"),
+            setup_basico["usuarios"]["u_ger"],
+        )
+        assert sc.status == SCStatus.PENDING_QUOTATION
+
+    async def test_tramo_alto_gerencia_puede_rechazar(
+        self, db_session, setup_basico, payload_sc_alto
+    ):
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc_alto, setup_basico["usuarios"]["u_sol"])
+
+        for action, actor_key in [
+            (SCAction.SUBMIT, "u_sol"),
+            (SCAction.APPROVE_AREA, "u_jefe"),
+            (SCAction.RELEASE_BUDGET, "u_fin"),
+        ]:
+            sc = await service.apply_transition(
+                sc.id, TransitionRequest(action=action), setup_basico["usuarios"][actor_key]
+            )
+        assert sc.status == SCStatus.PENDING_MANAGEMENT_APPROVAL
+
+        sc = await service.apply_transition(
+            sc.id,
+            TransitionRequest(action=SCAction.REJECT_MANAGEMENT, comment="Fuera de presupuesto"),
+            setup_basico["usuarios"]["u_ger"],
+        )
+        assert sc.status == SCStatus.REJECTED
 
 
 class TestAuditLogTrazabilidad:

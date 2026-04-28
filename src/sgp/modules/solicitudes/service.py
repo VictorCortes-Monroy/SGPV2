@@ -96,8 +96,13 @@ class SolicitudCompraService:
         self._authorize_action(sc, request.action, actor)
         before = sc.snapshot()
 
-        # Aplicar transición de estado (valida automáticamente)
-        new_status = apply_action(sc.status, request.action)
+        # Aplicar transición de estado (valida automáticamente).
+        # `monto_estimado` se pasa para soportar ruteo condicional (RN-MONTO).
+        new_status = apply_action(
+            sc.status,
+            request.action,
+            monto_estimado=sc.monto_estimado,
+        )
 
         # Reglas de negocio específicas por acción
         self._apply_business_rules(sc, request.action, actor)
@@ -134,6 +139,8 @@ class SolicitudCompraService:
             SCAction.RELEASE_BUDGET: {"finanzas"},
             SCAction.FREEZE_BUDGET: {"finanzas"},
             SCAction.AUTHORIZE_FROZEN: {"gerencia", "finanzas"},
+            SCAction.APPROVE_MANAGEMENT: {"gerencia"},
+            SCAction.REJECT_MANAGEMENT: {"gerencia"},
             SCAction.REGISTER_QUOTATIONS: {"abastecimiento"},
             SCAction.SEND_VALORIZATION: {"abastecimiento"},
             SCAction.APPROVE_VALORIZATION: {"jefe_area"},

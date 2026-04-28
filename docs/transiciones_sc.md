@@ -38,7 +38,7 @@ Condiciones que la SC debe cumplir para crearse o avanzar de estado.
 | ID | Regla | Aplica en | Estado |
 |---|---|---|---|
 | RN-DAT-1 | La SC NO requiere `justificacion` para ser enviada (campo opcional) | crear / `SUBMIT` | 🟢 |
-| RN-DAT-2 | La SC debe tener ≥ 1 línea con `item_id` y `cantidad > 0` al crearse | crear | 🟡 — el modelo lo permite vacío; falta validar en schema/service |
+| RN-DAT-2 | La SC debe tener ≥ 1 línea con `item_id` y `cantidad > 0` al crearse | crear | 🟢 — `SolicitudCompraCreate.lineas: Field(..., min_length=1)` + `cantidad: Field(..., gt=0)` |
 | RN-COT-1 | Debe haber ≥ 1 cotización registrada para pasar a `QUOTATION_RECEIVED` | `REGISTER_QUOTATIONS` | 🔴 |
 | RN-VAL-1 | La cotización ganadora debe tener `proveedor.rut` y `proveedor.nombre` antes de `SEND_VALORIZATION` | `SEND_VALORIZATION` | 🔴 |
 
@@ -62,11 +62,11 @@ Hoy el código exige **siempre** la aprobación de finanzas (estado `PENDING_BUD
 
 | ID | Decisión | Estado |
 |---|---|---|
-| RN-MONTO-1 | Tramo ≤ 1M **salta** `PENDING_BUDGET`. `APPROVE_AREA` rutea directo a `PENDING_QUOTATION` | 🔴 |
-| RN-MONTO-2 | Tramo > 5M agrega un estado nuevo `PENDING_MANAGEMENT_APPROVAL` (tras finanzas, antes de cotizar) y una acción `APPROVE_MANAGEMENT` | 🔴 |
-| RN-MONTO-3 | Las aprobaciones son **secuenciales**: jefe_area → finanzas (si aplica) → gerencia (si aplica) → cotización | 🔴 |
+| RN-MONTO-1 | Tramo ≤ 1M **salta** `PENDING_BUDGET`. `APPROVE_AREA` rutea directo a `PENDING_QUOTATION` | 🟢 |
+| RN-MONTO-2 | Tramo > 5M agrega un estado nuevo `PENDING_MANAGEMENT_APPROVAL` (tras finanzas, antes de cotizar) y una acción `APPROVE_MANAGEMENT` | 🟢 |
+| RN-MONTO-3 | Las aprobaciones son **secuenciales**: jefe_area → finanzas (si aplica) → gerencia (si aplica) → cotización | 🟢 |
 | RN-MONTO-4 | `APPROVE_PO` al final se **mantiene siempre** como aprobación formal de la OC, independiente del monto | 🟢 |
-| RN-MONTO-5 | El `monto_estimado` rutea las aprobaciones tempranas. El `monto_cotizado` real (cotización ganadora) re-valida la matriz antes de `EMIT_PO`; si cae en un tramo superior, la SC se bloquea y requiere las aprobaciones faltantes (escalación) | 🔴 |
+| RN-MONTO-5 | El `monto_estimado` rutea las aprobaciones tempranas. El `monto_cotizado` real (cotización ganadora) re-valida la matriz antes de `EMIT_PO`; si cae en un tramo superior, la SC se bloquea y requiere las aprobaciones faltantes (escalación) | 🔴 — pendiente módulo Cotizaciones |
 
 ### Flujo resultante por tramo
 
@@ -323,10 +323,9 @@ Lista de implementación prioritaria que sale de este doc:
 
 | Sprint | Cambio |
 |---|---|
-| Próximo | RN-DAT-2: validar ≥ 1 línea en schema `SolicitudCompraCreate` |
-| Próximo | RN-MONTO-1: ruteo en `APPROVE_AREA` según `monto_estimado` |
-| Próximo | RN-MONTO-2: agregar `PENDING_MANAGEMENT_APPROVAL`, `APPROVE_MANAGEMENT`, `REJECT_MANAGEMENT` al state machine |
-| Próximo | RN-MONTO-2: ruteo en `RELEASE_BUDGET` según `monto_estimado` |
+| ~~Próximo~~ | ~~RN-DAT-2~~: 🟢 ya estaba (Pydantic `min_length=1`) |
+| ~~Próximo~~ | ~~RN-MONTO-1~~: 🟢 ruteo en `APPROVE_AREA` según `monto_estimado` |
+| ~~Próximo~~ | ~~RN-MONTO-2~~: 🟢 nuevos estado/acciones + ruteo en `RELEASE_BUDGET` |
 | 2 | RN-COT-1: validar ≥ 1 cotización antes de `REGISTER_QUOTATIONS` |
 | 2 | RN-VAL-1: validar proveedor.rut + proveedor.nombre antes de `SEND_VALORIZATION` |
 | 4 | RN-MONTO-5: re-evaluación de matriz pre-`EMIT_PO` con `monto_cotizado` real |

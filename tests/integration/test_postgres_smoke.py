@@ -62,7 +62,12 @@ async def test_sc_status_enum_se_persiste_correctamente(pg_session: AsyncSession
 
 @pytest.mark.parametrize(
     "target_status",
-    [SCStatus.PENDING_AREA_APPROVAL, SCStatus.PENDING_BUDGET, SCStatus.CLOSED],
+    [
+        SCStatus.PENDING_AREA_APPROVAL,
+        SCStatus.PENDING_BUDGET,
+        SCStatus.PENDING_MANAGEMENT_APPROVAL,  # nuevo estado RN-MONTO-2
+        SCStatus.CLOSED,
+    ],
 )
 async def test_sc_status_update_persiste(pg_session: AsyncSession, target_status: SCStatus):
     """Asegura que el UPDATE del status también respeta el .value, no solo el INSERT default."""
