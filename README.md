@@ -193,6 +193,13 @@ El módulo `state_machine.py` define:
 - **RN5 (Auditoría inmutable):** trigger PL/pgSQL en migración bloquea UPDATE/DELETE en `audit_log`
 - **RN8 (Recotización máxima):** 2 ciclos antes de exigir aprobación gerencial extra
 - **RN-MONTO (Matriz de aprobación por monto):** ≤ 1M jefe_area; > 1M agrega finanzas; > 5M agrega gerencia (estado temprano `PENDING_MANAGEMENT_APPROVAL`). Ver detalles en [docs/transiciones_sc.md](docs/transiciones_sc.md#rn-monto--matriz-de-aprobación-por-monto-).
+- **RN-COMMENT:** todas las acciones de rechazo y `REGISTER_RECEPTION_NON_CONFORM` exigen `comment` no vacío.
+- **RN-SCOPE:** el rol del actor debe estar vinculado a la empresa de la SC (o ser global) en `usuarios_roles`.
+- **RN-DAT-4:** el solicitante no ingresa `monto_estimado`; se calcula desde las líneas.
+- **RN-SLA / current_assignee_role (denormalizados):** cada SC expone "esperando a quién" y "deadline esperado" sin queries adicionales, recalculados en cada transición.
+- **RN-ADJ:** adjuntos por SC con storage configurable (Railway volume hoy, Azure Blob a futuro). Validación de tamaño y MIME, soft-delete con audit, bloqueado en estados terminales.
+
+**Reglas pendientes:** ver [docs/notificaciones_pendiente.md](docs/notificaciones_pendiente.md) (RN-NOTIF), módulo Cotizaciones (RN-COT-1, RN-VAL-1, RN-MONTO-5).
 
 ---
 

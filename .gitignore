@@ -43,6 +43,10 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Smoke test artifacts
+smoke.pdf
+data/
+
 # Logs
 *.log
 logs/

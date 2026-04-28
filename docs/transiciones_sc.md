@@ -42,8 +42,12 @@ Condiciones que la SC debe cumplir para crearse o avanzar de estado.
 | RN-DAT-1 | La SC NO requiere `justificacion` para ser enviada (campo opcional) | crear / `SUBMIT` | 🟢 |
 | RN-DAT-2 | La SC debe tener ≥ 1 línea con `item_id` y `cantidad > 0` al crearse | crear | 🟢 — `SolicitudCompraCreate.lineas: Field(..., min_length=1)` + `cantidad: Field(..., gt=0)` |
 | RN-DAT-3 | `fecha_requerida` no puede ser anterior a hoy | crear | 🟢 — Pydantic `field_validator` |
+| RN-DAT-4 | El solicitante NO ingresa `monto_estimado`; se calcula como Σ(cantidad × precio_referencia) sobre las líneas | crear | 🟢 — `service.create()` |
 | RN-COT-1 | Debe haber ≥ 1 cotización registrada para pasar a `QUOTATION_RECEIVED` | `REGISTER_QUOTATIONS` | 🔴 |
 | RN-VAL-1 | La cotización ganadora debe tener `proveedor.rut` y `proveedor.nombre` antes de `SEND_VALORIZATION` | `SEND_VALORIZATION` | 🔴 |
+| RN-ADJ-1 | Adjuntos solo se pueden subir/borrar si la SC NO está en estado terminal (CLOSED/REJECTED/NON_CONFORMING/CANCELLED) | upload/delete adjunto | 🟢 — `AdjuntosService._authorize_modify` |
+| RN-ADJ-2 | Solo el dueño de la SC, el rol con `current_assignee_role` (excepto cuando es "solicitante", caso en que debe coincidir con el dueño) o admin pueden modificar adjuntos | upload/delete adjunto | 🟢 |
+| RN-NOTIF | Notificación al solicitante en cada transición relevante (email) | toda transición | 🔴 — ver [docs/notificaciones_pendiente.md](notificaciones_pendiente.md) |
 
 > Las RN-COT-1 y RN-VAL-1 dependen del **módulo Cotizaciones** (sprint 2). Hoy las acciones `REGISTER_QUOTATIONS` y `SEND_VALORIZATION` cambian el estado sin verificar nada de cotizaciones — son placeholders.
 
