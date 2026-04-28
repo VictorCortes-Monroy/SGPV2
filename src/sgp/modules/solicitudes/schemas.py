@@ -29,7 +29,13 @@ class LineaRead(BaseModel):
 
 # ===== SC =====
 class SolicitudCompraCreate(BaseModel):
-    """Payload para crear una SC en estado DRAFT."""
+    """Payload para crear una SC en estado DRAFT.
+
+    Nota: el solicitante NO ingresa `monto_estimado`. El sistema lo calcula
+    como Σ(cantidad × precio_referencia) de las líneas. Las líneas cuyo item
+    no tiene precio_referencia contribuyen 0 al monto estimado (la cotización
+    posterior corregirá el monto real).
+    """
 
     empresa_id: int = Field(..., gt=0)
     centro_costo_id: int = Field(..., gt=0)
@@ -37,7 +43,6 @@ class SolicitudCompraCreate(BaseModel):
     urgencia: Urgencia = Urgencia.NORMAL
     descripcion: str = Field(..., min_length=10, max_length=2000)
     justificacion: str | None = Field(None, max_length=2000)
-    monto_estimado: Decimal = Field(..., gt=0)
     fecha_requerida: date
     lineas: list[LineaCreate] = Field(..., min_length=1)
 
@@ -68,6 +73,8 @@ class SolicitudCompraRead(BaseModel):
     fecha_requerida: date
     status: SCStatus
     recotization_cycles: int
+    current_assignee_role: str | None = None
+    expected_resolution_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     lineas: list[LineaRead] = []

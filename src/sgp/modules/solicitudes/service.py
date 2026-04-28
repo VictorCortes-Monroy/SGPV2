@@ -6,15 +6,21 @@ Responsable de:
 - Coordinar reglas de negocio entre módulos
 """
 
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sgp.core.audit import AuditService
 from sgp.core.exceptions import BusinessRuleViolation, NotFoundError, PermissionDenied
+from sgp.modules.catalogo.models import CatalogoItem
 from sgp.modules.solicitudes.models import SolicitudCompra, SolicitudCompraLinea
 from sgp.modules.solicitudes.repository import SolicitudCompraRepository
 from sgp.modules.solicitudes.schemas import SolicitudCompraCreate, TransitionRequest
 from sgp.modules.solicitudes.state_machine import (
+    ASSIGNEE_ROLE_BY_STATUS,
+    SLA_HOURS_BY_STATUS,
     SCAction,
     SCStatus,
     apply_action,
@@ -76,8 +82,14 @@ class SolicitudCompraService:
     async def create(
         self, payload: SolicitudCompraCreate, solicitante: Usuario
     ) -> SolicitudCompra:
-        """Crea una SC nueva en estado DRAFT."""
+        """Crea una SC nueva en estado DRAFT.
+
+        El `monto_estimado` se calcula automáticamente como
+        Σ(cantidad × precio_referencia) de las líneas; las líneas con
+        item sin precio_referencia contribuyen 0.
+        """
         numero = await self.repo.generate_next_numero()
+        monto_estimado = await self._calcular_monto_estimado(payload)
 
         sc = SolicitudCompra(
             numero=numero,
@@ -88,7 +100,7 @@ class SolicitudCompraService:
             urgencia=payload.urgencia,
             descripcion=payload.descripcion,
             justificacion=payload.justificacion,
-            monto_estimado=payload.monto_estimado,
+            monto_estimado=monto_estimado,
             fecha_requerida=payload.fecha_requerida,
             status=SCStatus.DRAFT,
             recotization_cycles=0,
@@ -101,6 +113,7 @@ class SolicitudCompraService:
                 for l in payload.lineas
             ],
         )
+        self._sync_assignee_and_sla(sc)
         await self.repo.add(sc)
 
         await self.audit.log(
@@ -109,9 +122,41 @@ class SolicitudCompraService:
             action="CREATE",
             actor_id=solicitante.id,
             after=sc.snapshot(),
-            comment=f"SC creada con {len(payload.lineas)} línea(s)",
+            comment=(
+                f"SC creada con {len(payload.lineas)} línea(s); "
+                f"monto_estimado calculado = {monto_estimado}"
+            ),
         )
         return sc
+
+    async def _calcular_monto_estimado(self, payload: SolicitudCompraCreate) -> Decimal:
+        """Σ(cantidad × precio_referencia) sobre todas las líneas.
+
+        Los items sin precio_referencia contribuyen 0. La cotización posterior
+        determinará el monto real (RN-MONTO-5: re-validación pre-EMIT_PO).
+        """
+        item_ids = [l.item_id for l in payload.lineas]
+        result = await self.db.execute(
+            select(CatalogoItem).where(CatalogoItem.id.in_(item_ids))
+        )
+        precios_by_id = {
+            i.id: (i.precio_referencia or Decimal(0)) for i in result.scalars().all()
+        }
+        total = Decimal(0)
+        for linea in payload.lineas:
+            precio = precios_by_id.get(linea.item_id, Decimal(0))
+            total += Decimal(linea.cantidad) * precio
+        return total
+
+    @staticmethod
+    def _sync_assignee_and_sla(sc: SolicitudCompra) -> None:
+        """Recalcula `current_assignee_role` y `expected_resolution_at` según
+        el `status` actual de la SC. Llamar tras cada cambio de estado."""
+        sc.current_assignee_role = ASSIGNEE_ROLE_BY_STATUS.get(sc.status)
+        sla_hours = SLA_HOURS_BY_STATUS.get(sc.status)
+        sc.expected_resolution_at = (
+            datetime.now(UTC) + timedelta(hours=sla_hours) if sla_hours else None
+        )
 
     # ------------------------------------------------------------------
     # Transiciones
@@ -150,6 +195,7 @@ class SolicitudCompraService:
         self._apply_business_rules(sc, request.action, actor)
 
         sc.status = new_status
+        self._sync_assignee_and_sla(sc)
 
         await self.audit.log(
             entity_type="solicitud_compra",

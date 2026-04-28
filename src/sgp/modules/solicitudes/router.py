@@ -38,6 +38,8 @@ def _serialize_sc(sc) -> SolicitudCompraRead:
         fecha_requerida=sc.fecha_requerida,
         status=sc.status,
         recotization_cycles=sc.recotization_cycles,
+        current_assignee_role=sc.current_assignee_role,
+        expected_resolution_at=sc.expected_resolution_at,
         created_at=sc.created_at,
         updated_at=sc.updated_at,
         lineas=[

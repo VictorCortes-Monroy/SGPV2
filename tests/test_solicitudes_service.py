@@ -111,7 +111,12 @@ async def setup_basico(db_session):
     }
 
 
-def _build_payload(setup_basico, monto: Decimal) -> SolicitudCompraCreate:
+def _build_payload(setup_basico, monto_target: Decimal) -> SolicitudCompraCreate:
+    """Construye un payload de SC. Como `monto_estimado` ya no se ingresa en el
+    payload (se auto-calcula), compute la `cantidad` necesaria sobre el item
+    seed para que `monto_estimado = cantidad × precio_referencia` dé el target."""
+    item = setup_basico["item"]
+    cantidad = monto_target / item.precio_referencia
     return SolicitudCompraCreate(
         empresa_id=setup_basico["empresa"].id,
         centro_costo_id=setup_basico["cc"].id,
@@ -119,9 +124,8 @@ def _build_payload(setup_basico, monto: Decimal) -> SolicitudCompraCreate:
         urgencia=Urgencia.NORMAL,
         descripcion="Compra de repuesto crítico para mantención preventiva",
         justificacion="Mantención programada de equipo CAT 320",
-        monto_estimado=monto,
         fecha_requerida=date.today() + timedelta(days=30),
-        lineas=[LineaCreate(item_id=setup_basico["item"].id, cantidad=Decimal("3"))],
+        lineas=[LineaCreate(item_id=item.id, cantidad=cantidad)],
     )
 
 
@@ -420,6 +424,134 @@ class TestAuditLogTrazabilidad:
         assert log.actor_role == "jefe_area"
 
 
+class TestMontoAutoCalculado:
+    """El solicitante NO ingresa `monto_estimado` en el payload; el sistema lo
+    calcula como Σ(cantidad × precio_referencia) de las líneas."""
+
+    async def test_monto_se_calcula_desde_lineas(self, db_session, setup_basico):
+        """precio_referencia = 10000, cantidad = 50 → monto = 500_000."""
+        payload = SolicitudCompraCreate(
+            empresa_id=setup_basico["empresa"].id,
+            centro_costo_id=setup_basico["cc"].id,
+            tipo=TipoCompra.BIEN,
+            urgencia=Urgencia.NORMAL,
+            descripcion="SC para verificar monto auto-calculado",
+            fecha_requerida=date.today() + timedelta(days=10),
+            lineas=[LineaCreate(item_id=setup_basico["item"].id, cantidad=Decimal("50"))],
+        )
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload, setup_basico["usuarios"]["u_sol"])
+        assert sc.monto_estimado == Decimal("500000")
+
+    async def test_monto_con_item_sin_precio_referencia_es_cero(
+        self, db_session, setup_basico
+    ):
+        """Líneas con item.precio_referencia=NULL contribuyen 0 al total."""
+        from sgp.modules.catalogo.models import CatalogoItem, Criticidad, UnidadMedida
+
+        item_sin_precio = CatalogoItem(
+            sku="ITM-NO-PRICE",
+            nombre="Item sin precio",
+            familia_id=setup_basico["item"].familia_id,
+            unidad_medida=UnidadMedida.SVC,
+            precio_referencia=None,
+            criticidad=Criticidad.ESTANDAR,
+        )
+        db_session.add(item_sin_precio)
+        await db_session.flush()
+
+        payload = SolicitudCompraCreate(
+            empresa_id=setup_basico["empresa"].id,
+            centro_costo_id=setup_basico["cc"].id,
+            tipo=TipoCompra.SERVICIO,
+            urgencia=Urgencia.NORMAL,
+            descripcion="Servicio puntual sin precio en catálogo",
+            fecha_requerida=date.today() + timedelta(days=10),
+            lineas=[LineaCreate(item_id=item_sin_precio.id, cantidad=Decimal("1"))],
+        )
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload, setup_basico["usuarios"]["u_sol"])
+        assert sc.monto_estimado == Decimal("0")
+
+
+class TestSLAyAssignee:
+    """Verifica que `current_assignee_role` y `expected_resolution_at` se
+    sincronicen con el estado en cada transición."""
+
+    async def test_create_setea_assignee_solicitante(
+        self, db_session, setup_basico, payload_sc
+    ):
+        """SC en DRAFT → assignee = solicitante (sin SLA)."""
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        assert sc.current_assignee_role == "solicitante"
+        assert sc.expected_resolution_at is None  # DRAFT no tiene SLA
+
+    async def test_submit_setea_assignee_jefe_con_sla(
+        self, db_session, setup_basico, payload_sc
+    ):
+        """SUBMIT → PENDING_AREA_APPROVAL: jefe_area, SLA 24h."""
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        sc = await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+        assert sc.current_assignee_role == "jefe_area"
+        assert sc.expected_resolution_at is not None
+        from datetime import UTC, datetime
+        delta = sc.expected_resolution_at - datetime.now(UTC)
+        # SLA = 24h, con tolerancia de 5 min
+        assert timedelta(hours=23, minutes=55) <= delta <= timedelta(hours=24, minutes=5)
+
+    async def test_estado_terminal_limpia_assignee_y_sla(
+        self, db_session, setup_basico, payload_sc
+    ):
+        """REJECT_AREA → REJECTED (terminal): assignee y SLA en NULL."""
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+        sc = await service.apply_transition(
+            sc.id,
+            TransitionRequest(action=SCAction.REJECT_AREA, comment="Sin presupuesto"),
+            setup_basico["usuarios"]["u_jefe"],
+        )
+        assert sc.status == SCStatus.REJECTED
+        assert sc.current_assignee_role is None
+        assert sc.expected_resolution_at is None
+
+    async def test_assignee_cambia_con_cada_transicion(
+        self, db_session, setup_basico, payload_sc
+    ):
+        """Verifica que en el camino SUBMIT → APPROVE_AREA → RELEASE_BUDGET el
+        assignee pase: solicitante → jefe_area → finanzas → abastecimiento."""
+        service = SolicitudCompraService(db_session)
+        sc = await service.create(payload_sc, setup_basico["usuarios"]["u_sol"])
+        assert sc.current_assignee_role == "solicitante"
+
+        sc = await service.apply_transition(
+            sc.id, TransitionRequest(action=SCAction.SUBMIT), setup_basico["usuarios"]["u_sol"]
+        )
+        assert sc.current_assignee_role == "jefe_area"
+
+        sc = await service.apply_transition(
+            sc.id,
+            TransitionRequest(action=SCAction.APPROVE_AREA),
+            setup_basico["usuarios"]["u_jefe"],
+        )
+        # Tramo medio (3M) → PENDING_BUDGET → finanzas
+        assert sc.current_assignee_role == "finanzas"
+
+        sc = await service.apply_transition(
+            sc.id,
+            TransitionRequest(action=SCAction.RELEASE_BUDGET),
+            setup_basico["usuarios"]["u_fin"],
+        )
+        # Tramo medio (3M ≤ 5M) → PENDING_QUOTATION → abastecimiento
+        assert sc.current_assignee_role == "abastecimiento"
+
+
 class TestRefinamientosSolicitudes:
     """Tests para los 4 refinamientos del módulo:
     1. Comments obligatorios en rechazos.
@@ -568,7 +700,6 @@ class TestRefinamientosSolicitudes:
                 tipo=TipoCompra.BIEN,
                 urgencia=Urgencia.NORMAL,
                 descripcion="Test fecha pasada",
-                monto_estimado=Decimal("1000"),
                 fecha_requerida=date.today() - timedelta(days=1),
                 lineas=[LineaCreate(item_id=setup_basico["item"].id, cantidad=Decimal("1"))],
             )
@@ -580,7 +711,6 @@ class TestRefinamientosSolicitudes:
             tipo=TipoCompra.BIEN,
             urgencia=Urgencia.NORMAL,
             descripcion="Test fecha hoy",
-            monto_estimado=Decimal("1000"),
             fecha_requerida=date.today(),
             lineas=[LineaCreate(item_id=setup_basico["item"].id, cantidad=Decimal("1"))],
         )

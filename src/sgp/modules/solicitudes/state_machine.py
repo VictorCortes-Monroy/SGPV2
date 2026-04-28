@@ -273,6 +273,61 @@ CONDITIONAL_ROUTES: dict[tuple[SCStatus, SCAction], Callable[[Decimal], SCStatus
 }
 
 
+# RN-SLA — horas esperadas por estado antes de quedar fuera de SLA. Útil para
+# que el solicitante vea "deadline esperado" y para alertas futuras.
+SLA_HOURS_BY_STATUS = {
+    SCStatus.DRAFT: None,                              # controlado por el solicitante
+    SCStatus.PENDING_AREA_APPROVAL: 24,
+    SCStatus.PENDING_BUDGET: 48,
+    SCStatus.BUDGET_FROZEN: 168,                        # 1 semana — espera autorización superior
+    SCStatus.PENDING_MANAGEMENT_APPROVAL: 72,
+    SCStatus.PENDING_QUOTATION: 120,                    # 5 días para cotizar
+    SCStatus.QUOTATION_RECEIVED: 24,
+    SCStatus.PENDING_VALORIZATION: 48,
+    SCStatus.VALORIZATION_APPROVED: 24,                 # esperando emit_po
+    SCStatus.PENDING_PO_EMISSION: 24,
+    SCStatus.PENDING_PO_APPROVAL: 48,
+    SCStatus.PO_APPROVED: 24,                           # esperando envío
+    SCStatus.PO_SENT_TO_SUPPLIER: 720,                  # 30 días — esperando entrega
+    SCStatus.PENDING_RECEPTION: 168,
+    SCStatus.RECEPTION_CONFORM: 720,                    # esperando factura del proveedor
+    SCStatus.PENDING_INVOICE: 168,
+    SCStatus.INVOICE_MATCHED: 24,
+    SCStatus.CLOSED: None,
+    SCStatus.REJECTED: None,
+    SCStatus.NON_CONFORMING: None,
+    SCStatus.CANCELLED: None,
+}
+
+
+# RN-ASSIGNEE — rol responsable de actuar en cada estado. Denormalizado en
+# `SolicitudCompra.current_assignee_role` para que el solicitante (y futuros
+# dashboards) vean a quién están esperando sin queries adicionales.
+ASSIGNEE_ROLE_BY_STATUS = {
+    SCStatus.DRAFT: "solicitante",
+    SCStatus.PENDING_AREA_APPROVAL: "jefe_area",
+    SCStatus.PENDING_BUDGET: "finanzas",
+    SCStatus.BUDGET_FROZEN: "gerencia",
+    SCStatus.PENDING_MANAGEMENT_APPROVAL: "gerencia",
+    SCStatus.PENDING_QUOTATION: "abastecimiento",
+    SCStatus.QUOTATION_RECEIVED: "abastecimiento",
+    SCStatus.PENDING_VALORIZATION: "jefe_area",
+    SCStatus.VALORIZATION_APPROVED: "abastecimiento",
+    SCStatus.PENDING_PO_EMISSION: "abastecimiento",
+    SCStatus.PENDING_PO_APPROVAL: "gerencia",
+    SCStatus.PO_APPROVED: "abastecimiento",
+    SCStatus.PO_SENT_TO_SUPPLIER: "bodega",
+    SCStatus.PENDING_RECEPTION: "bodega",
+    SCStatus.RECEPTION_CONFORM: "finanzas",
+    SCStatus.PENDING_INVOICE: "finanzas",
+    SCStatus.INVOICE_MATCHED: "finanzas",
+    SCStatus.CLOSED: None,
+    SCStatus.REJECTED: None,
+    SCStatus.NON_CONFORMING: None,
+    SCStatus.CANCELLED: None,
+}
+
+
 def validate_transition(from_status: SCStatus, to_status: SCStatus) -> None:
     """Valida que la transición esté permitida. Lanza InvalidTransitionError si no."""
     allowed = ALLOWED_TRANSITIONS.get(from_status, set())

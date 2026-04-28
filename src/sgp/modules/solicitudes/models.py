@@ -1,10 +1,10 @@
 """Modelos: Solicitud de Compra y sus líneas."""
 
 import enum
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from sgp.core.database import Base, TimestampMixin
@@ -69,6 +69,14 @@ class SolicitudCompra(Base, TimestampMixin):
         index=True,
     )
     recotization_cycles: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Denormalizados para que el frontend pueda mostrar "esperando a quién" y
+    # "para cuándo" sin queries adicionales. Se recalculan en cada transición
+    # desde ASSIGNEE_ROLE_BY_STATUS y SLA_HOURS_BY_STATUS.
+    current_assignee_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    expected_resolution_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Trazabilidad de aprobaciones (denormalizado para queries rápidas)
     approved_by_area_id: Mapped[int | None] = mapped_column(
