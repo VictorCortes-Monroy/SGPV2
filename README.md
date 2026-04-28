@@ -229,6 +229,15 @@ Todos los endpoints están bajo `/api/v1` y requieren header `X-User-Id` (modo m
 ### Auditoría
 - `GET /auditoria/` — log inmutable filtrable por entity, actor, etc.
 
+### Gastos (solo finanzas / admin)
+- `GET /gastos/resumen?empresa_id=X&periodo_desde=Y&periodo_hasta=Z` — comprometido vs ejecutado agregado por CC. Solo medición, no bloquea el workflow.
+
+### Adjuntos
+- `POST /solicitudes/{id}/adjuntos` (multipart) — sube documento de respaldo (PDF, imágenes, Office, txt/csv)
+- `GET /solicitudes/{id}/adjuntos` — lista adjuntos vigentes
+- `GET /solicitudes/{id}/adjuntos/{adjunto_id}/download` — descarga
+- `DELETE /solicitudes/{id}/adjuntos/{adjunto_id}` — soft delete + borra archivo
+
 Documentación completa con ejemplos: **http://localhost:8000/docs**.
 
 ---

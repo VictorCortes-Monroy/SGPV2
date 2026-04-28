@@ -51,11 +51,18 @@ async def get_current_user(
     raise HTTPException(status_code=501, detail="Clerk auth aún no implementado")
 
 
-def require_role(*allowed_roles: str):
-    """Dependencia que requiere que el usuario tenga al menos uno de los roles."""
+def require_role(*allowed_roles: str, admin_override: bool = True):
+    """Dependencia que requiere que el usuario tenga al menos uno de los roles.
+
+    Por convención, `admin` puede acceder a cualquier endpoint sin importar
+    los `allowed_roles`. Pasar `admin_override=False` para deshabilitar
+    (raro, casos donde admin no debería ver datos).
+    """
 
     async def _checker(user: Usuario = Depends(get_current_user)) -> Usuario:
         user_roles = {r.nombre for r in user.roles}
+        if admin_override and "admin" in user_roles:
+            return user
         if not user_roles.intersection(allowed_roles):
             raise HTTPException(
                 status_code=403,
