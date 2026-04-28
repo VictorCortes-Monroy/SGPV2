@@ -26,6 +26,7 @@ services:
       AUTH_MODE: mock
       LOG_LEVEL: INFO
       CORS_ORIGINS: "http://localhost:3000,http://localhost:8080"
+      STORAGE_PATH: /data/sgp/adjuntos
     depends_on:
       db:
         condition: service_healthy
@@ -34,6 +35,7 @@ services:
       - ./alembic:/app/alembic
       - ./scripts:/app/scripts
       - ./tests:/app/tests
+      - sgp_adjuntos_data:/data
     command: >
       sh -c "alembic upgrade head &&
              python scripts/seed.py &&
@@ -41,3 +43,4 @@ services:
 
 volumes:
   sgp_pg_data:
+  sgp_adjuntos_data:    # equivalente local del Railway volume para adjuntos

@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # Importar todos los modelos para que SQLAlchemy resuelva las FKs entre tablas
 # en su MetaData. Sin estos imports, mapear SolicitudCompra solo falla porque
 # la FK a `centros_costo` no encuentra el modelo de empresas.
+from sgp.modules.adjuntos import models as _adj  # noqa: F401
 from sgp.modules.auditoria import models as _a  # noqa: F401
 from sgp.modules.catalogo import models as _c  # noqa: F401
 from sgp.modules.empresas import models as _e  # noqa: F401

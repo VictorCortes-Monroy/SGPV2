@@ -19,6 +19,7 @@ from sgp.core.config import get_settings  # noqa: E402
 from sgp.core.database import Base  # noqa: E402
 
 # Importa todos los modelos para que Base.metadata los conozca
+from sgp.modules.adjuntos import models as _adj_m  # noqa: F401, E402
 from sgp.modules.auditoria import models as _audit_m  # noqa: F401, E402
 from sgp.modules.catalogo import models as _cat_m  # noqa: F401, E402
 from sgp.modules.empresas import models as _emp_m  # noqa: F401, E402

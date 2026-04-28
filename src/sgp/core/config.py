@@ -36,9 +36,30 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "console"] = "console"
 
+    # Storage de adjuntos (Railway volume hoy, Azure Blob a futuro).
+    # `storage_path` debe ser un path en disco persistente: en Railway viene
+    # del volume mount, en local debería ser un bind mount del docker-compose.
+    storage_path: str = "/data/sgp/adjuntos"
+    storage_max_file_mb: int = 10
+    storage_allowed_mimes: str = (
+        "application/pdf,"
+        "image/png,image/jpeg,image/webp,"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
+        "text/plain,text/csv"
+    )
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def storage_allowed_mimes_set(self) -> set[str]:
+        return {m.strip() for m in self.storage_allowed_mimes.split(",") if m.strip()}
+
+    @property
+    def storage_max_file_bytes(self) -> int:
+        return self.storage_max_file_mb * 1024 * 1024
 
 
 @lru_cache

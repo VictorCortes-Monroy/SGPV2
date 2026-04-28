@@ -35,6 +35,7 @@ async def db_engine():
     """Engine en memoria para cada test."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     # Importa los modelos para que Base.metadata los conozca
+    from sgp.modules.adjuntos import models as _adj  # noqa: F401
     from sgp.modules.auditoria import models as _a  # noqa: F401
     from sgp.modules.catalogo import models as _c  # noqa: F401
     from sgp.modules.empresas import models as _e  # noqa: F401
