@@ -3,6 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +24,16 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "postgresql+asyncpg://sgp:sgp_dev_password@localhost:5432/sgp_dev"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_postgres_scheme(cls, v: str) -> str:
+        """Railway/Heroku/etc. inyectan `postgresql://` (driver psycopg2 default).
+        SQLAlchemy async requiere `postgresql+asyncpg://`. Auto-traducimos para
+        que el operador no tenga que masagear la env var en el panel."""
+        if isinstance(v, str) and v.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + v[len("postgresql://"):]
+        return v
 
     # Auth
     auth_mode: Literal["mock", "clerk"] = "mock"

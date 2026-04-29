@@ -391,28 +391,85 @@ docker compose exec api pytest -v   # 39 tests (33 unit + 6 integration)
 
 ## Despliegue en Railway
 
-El proyecto incluye `railway.json` configurado para deployment directo desde GitHub.
+El proyecto incluye [`railway.json`](railway.json) y [`scripts/start.sh`](scripts/start.sh) listos para deployment directo desde GitHub. **No se necesita Railway CLI.**
 
-### Pasos:
+### Paso 1 — Crear el proyecto en Railway
 
-1. **Conectar el repo de GitHub a Railway**
-2. **Agregar servicio de Postgres** desde el panel de Railway (Add Service → Database → PostgreSQL)
-3. **Variables de entorno:** Railway inyecta `DATABASE_URL` automáticamente. Solo agregar:
+1. Ir a https://railway.com → **New Project** → **Deploy from GitHub repo** → seleccionar `SGPV2`.
+2. Railway detecta el `Dockerfile` y `railway.json` automáticamente. El primer build arranca solo (fallará hasta agregar la BD).
+
+### Paso 2 — Agregar Postgres
+
+1. En el proyecto: **+ New** → **Database** → **PostgreSQL**.
+2. Railway inyecta `DATABASE_URL` como variable de entorno **referencial**. En el servicio API:
+   - **Variables** → **Add Reference Variable** → seleccionar `Postgres.DATABASE_URL` → guardar como `DATABASE_URL`.
+   - Ya no hay que masagear el prefijo: el validator de `core/config.py` convierte `postgresql://` a `postgresql+asyncpg://` automáticamente.
+
+### Paso 3 — Volumen persistente para adjuntos
+
+Los archivos subidos viven en disco (`storage_path`). Sin volumen, se pierden en cada redeploy.
+
+1. En el servicio API: **Settings** → **Volumes** → **+ New Volume**.
+2. **Mount path**: `/data`
+3. **Size**: 1 GB inicial (escalable después).
+4. Guardar.
+
+### Paso 4 — Variables de entorno
+
+Agregar en **Variables** del servicio API:
+
+| Variable | Valor | Notas |
+|---|---|---|
+| `APP_ENV` | `production` | |
+| `APP_DEBUG` | `false` | |
+| `AUTH_MODE` | `mock` | reemplazar por `clerk` cuando se integre |
+| `LOG_LEVEL` | `INFO` | |
+| `LOG_FORMAT` | `json` | logs estructurados en producción |
+| `CORS_ORIGINS` | `https://tu-frontend.railway.app` | actualizar tras desplegar el frontend |
+| `STORAGE_PATH` | `/data/sgp/adjuntos` | dentro del volumen |
+| `SEED_ON_STARTUP` | `true` solo en el primer deploy | después dejar `false` o quitar |
+
+### Paso 5 — Trigger del deploy
+
+Railway redeploya automáticamente al agregar variables. También se puede forzar con **Deploy → Redeploy**. El startCommand:
+
+1. corre `alembic upgrade head` (aplica las 5 migraciones)
+2. si `SEED_ON_STARTUP=true`, corre `python scripts/seed.py` (idempotente; crea roles, 7 usuarios demo, 1 empresa, 4 CCs, 5 SKUs)
+3. arranca `uvicorn` en el puerto que Railway inyecta (`$PORT`)
+
+### Paso 6 — Verificación
+
+1. Railway expone una URL pública del estilo `https://sgpv2-production.up.railway.app`. Habilitar dominio en **Settings → Networking → Generate Domain**.
+2. Healthcheck:
+   ```bash
+   curl https://<tu-dominio>/health
+   # → {"status":"ok","version":"0.1.0"}
    ```
-   APP_ENV=production
-   AUTH_MODE=mock
-   LOG_LEVEL=INFO
-   CORS_ORIGINS=https://tu-frontend.railway.app
+3. Swagger UI: `https://<tu-dominio>/docs`.
+4. Smoke E2E (con seed cargado):
+   ```bash
+   curl -H "X-User-Id: user_victor" https://<tu-dominio>/api/v1/usuarios/me
    ```
-4. **El servicio se despliega solo** — Railway detecta el `Dockerfile` y `railway.json`. El `startCommand` corre las migraciones automáticamente antes de iniciar uvicorn.
 
-**Importante:** la variable `DATABASE_URL` que inyecta Railway viene en formato `postgresql://...`. SQLAlchemy async necesita `postgresql+asyncpg://...`. Para resolver esto, agregar en `core/config.py` un validator que reemplace el prefijo, o configurar manualmente la `DATABASE_URL` con `postgresql+asyncpg://...`.
+### Paso 7 — Apagar el seed
 
-### Costo estimado en Railway
+Una vez verificado, en **Variables** poner `SEED_ON_STARTUP=false` (o eliminar la variable). Si se queda en `true` no daña nada (el seed es idempotente) pero ralentiza el startup.
 
-- API service: ~USD 5/mes (use Hobby plan o pay-as-you-go)
-- Postgres: ~USD 5–10/mes
-- **Total: USD 10–20/mes** para el MVP.
+### Costo estimado
+
+- API service: ~USD 5/mes (Hobby plan, suficiente para MVP)
+- Postgres: ~USD 5/mes para el plan más chico
+- Volume: incluido en Hobby hasta 1 GB
+- **Total: USD 10–15/mes** para el MVP.
+
+### Troubleshooting
+
+| Síntoma | Causa probable | Fix |
+|---|---|---|
+| `connection refused` al arrancar | DATABASE_URL no apunta a Postgres del proyecto | Verificar que la variable referencial esté correctamente vinculada |
+| `relation "..." does not exist` | Migraciones no corrieron | Revisar logs del primer arranque; `alembic upgrade head` debería aparecer |
+| 500 al subir adjunto | Volume no montado en `/data` | Settings → Volumes; reiniciar |
+| 401 en todos los requests | Falta header `X-User-Id` | Mientras `AUTH_MODE=mock`, todos los requests requieren ese header |
 
 ---
 
