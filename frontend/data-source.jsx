@@ -156,7 +156,12 @@ const useDataSource = ({ source, userId, baseUrl }) => {
         const created = await Api.createSolicitud(payload);
         await Api.submit(created.id, 'Enviada desde Acquira');
         await loadFromApi();
-        return { ok: true, id: `SC-${created.id}` };
+        // Importante: devolvemos `created.numero` (ej "SC-2026-000060"), que es
+        // el mismo id que adaptSolicitud usa al listar — así submitNueva puede
+        // hacer find() en la lista y renderizar el tracking de la SC recién
+        // creada. Si devolviéramos `SC-${id}`, el find falla silenciosamente
+        // y la pantalla de tracking queda vacía.
+        return { ok: true, id: created.numero };
       } catch (e) { return { ok: false, error: e }; }
     }
     const id = `SOL-2026-${String(170 + solicitudes.length).padStart(4, '0')}`;
