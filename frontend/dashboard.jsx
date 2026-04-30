@@ -72,8 +72,15 @@ const Dashboard = ({ solicitudes, onOpen, onNueva }) => {
           </thead>
           <tbody>
             {filtradas.map((s) => {
-              const empresa = EMPRESAS.find((e) => e.id === s.empresa);
-              const cc = CENTROS_COSTO[s.empresa].find((c) => c.id === s.centroCosto);
+              // Fuente preferida: data del API embebida en la SC (s.empresaInfo / s.centroCostoInfo).
+              // Fallback: el mock antiguo. Esto evita crashear cuando la SC viene del backend
+              // y su empresa no está en EMPRESAS mock.
+              const empresa = s.empresaInfo
+                ? { abrev: s.empresaInfo.nombre_corto, nombre: s.empresaInfo.razon_social }
+                : EMPRESAS.find((e) => e.id === s.empresa) || { abrev: s.empresa || '—' };
+              const cc = s.centroCostoInfo
+                ? { codigo: s.centroCostoInfo.codigo, nombre: s.centroCostoInfo.nombre }
+                : (CENTROS_COSTO[s.empresa] || []).find((c) => c.id === s.centroCosto);
               const estadoIdx = ESTADOS.findIndex((e) => e.id === s.estadoActual);
               const progreso = s.estadoActual === 'borrador' ? 0 : ((estadoIdx) / (ESTADOS.length - 1)) * 100;
               return (
@@ -114,8 +121,12 @@ const Dashboard = ({ solicitudes, onOpen, onNueva }) => {
       {/* Mobile cards */}
       <div className="mobile-list">
         {filtradas.map((s) => {
-          const empresa = EMPRESAS.find((e) => e.id === s.empresa);
-          const cc = CENTROS_COSTO[s.empresa].find((c) => c.id === s.centroCosto);
+          const empresa = s.empresaInfo
+            ? { abrev: s.empresaInfo.nombre_corto }
+            : EMPRESAS.find((e) => e.id === s.empresa) || { abrev: s.empresa || '—' };
+          const cc = s.centroCostoInfo
+            ? { codigo: s.centroCostoInfo.codigo, nombre: s.centroCostoInfo.nombre }
+            : (CENTROS_COSTO[s.empresa] || []).find((c) => c.id === s.centroCosto);
           return (
             <Card key={s.id} hover onClick={() => onOpen(s.id)} className="mobile-row">
               <div className="mobile-row-top">
