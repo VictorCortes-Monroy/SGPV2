@@ -42,10 +42,17 @@ app = FastAPI(
 
 
 # CORS
+# Si la lista incluye "*", la CORS spec PROHIBE allow_credentials=True
+# (los browsers rechazan la respuesta silenciosamente con "Failed to fetch").
+# Auto-flip a credentials=False cuando se usa wildcard. Para producción
+# con Clerk + cookies, usar lista explícita de orígenes y queda credentials=True.
+_cors_origins = settings.cors_origins_list
+_allow_credentials = "*" not in _cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
