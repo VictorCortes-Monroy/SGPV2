@@ -46,8 +46,12 @@ const BandejaTabla = ({ solicitudes, onOpen }) => (
       </thead>
       <tbody>
         {solicitudes.map((s) => {
-          const empresa = EMPRESAS.find((e) => e.id === s.empresa);
-          const cc = CENTROS_COSTO[s.empresa].find((c) => c.id === s.centroCosto);
+          const empresa = s.empresaInfo
+            ? { abrev: s.empresaInfo.nombre_corto }
+            : EMPRESAS.find((e) => e.id === s.empresa) || { abrev: s.empresa || '—' };
+          const cc = s.centroCostoInfo
+            ? { codigo: s.centroCostoInfo.codigo, nombre: s.centroCostoInfo.nombre }
+            : (CENTROS_COSTO[s.empresa] || []).find((c) => c.id === s.centroCosto) || { codigo: '—', nombre: '—' };
           return (
             <tr key={s.id} onClick={() => onOpen(s.id)} className="row-click">
               <td className="cell-folio">{s.id}</td>
@@ -86,8 +90,12 @@ const BandejaLista = ({ solicitudes, onOpen }) => (
   <Card className="list-card">
     <div className="lista-bandeja">
       {solicitudes.map((s) => {
-        const empresa = EMPRESAS.find((e) => e.id === s.empresa);
-        const cc = CENTROS_COSTO[s.empresa].find((c) => c.id === s.centroCosto);
+        const empresa = s.empresaInfo
+          ? { abrev: s.empresaInfo.nombre_corto }
+          : EMPRESAS.find((e) => e.id === s.empresa) || { abrev: s.empresa || '—' };
+        const cc = s.centroCostoInfo
+          ? { codigo: s.centroCostoInfo.codigo, nombre: s.centroCostoInfo.nombre }
+          : (CENTROS_COSTO[s.empresa] || []).find((c) => c.id === s.centroCosto) || { codigo: '—', nombre: '—' };
         return (
           <div key={s.id} className="lista-row" onClick={() => onOpen(s.id)}>
             <div className={`lista-urg-bar lista-urg-${s.urgencia}`} />
@@ -121,8 +129,12 @@ const BandejaLista = ({ solicitudes, onOpen }) => (
 const BandejaCards = ({ solicitudes, onOpen }) => (
   <div className="bandeja-cards">
     {solicitudes.map((s) => {
-      const empresa = EMPRESAS.find((e) => e.id === s.empresa);
-      const cc = CENTROS_COSTO[s.empresa].find((c) => c.id === s.centroCosto);
+      const empresa = s.empresaInfo
+        ? { abrev: s.empresaInfo.nombre_corto }
+        : EMPRESAS.find((e) => e.id === s.empresa) || { abrev: s.empresa || '—' };
+      const cc = s.centroCostoInfo
+        ? { codigo: s.centroCostoInfo.codigo, nombre: s.centroCostoInfo.nombre }
+        : (CENTROS_COSTO[s.empresa] || []).find((c) => c.id === s.centroCosto) || { codigo: '—', nombre: '—' };
       return (
         <Card key={s.id} hover className="bandeja-card" onClick={() => onOpen(s.id)}>
           <div className="bandeja-card-head">

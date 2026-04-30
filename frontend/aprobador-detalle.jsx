@@ -75,7 +75,10 @@ const ApprovalActionModal = ({ tipo, solicitud, onClose, onConfirm }) => {
 };
 
 const PresupuestoCC = ({ centroCosto, empresa, montoSolicitado }) => {
-  const cc = CENTROS_COSTO[empresa].find((c) => c.id === centroCosto);
+  // Si la empresa no está en el mock (ej. SC viene del API real), no mostramos
+  // la card de presupuesto — los datos de presupuesto/YTD viven solo en mock.
+  // TODO: cuando el backend exponga /presupuestos, reemplazar lookup por API.
+  const cc = (CENTROS_COSTO[empresa] || []).find((c) => c.id === centroCosto);
   if (!cc) return null;
   const usado = cc.gastoYtd;
   const total = cc.presupuestoAnual;
@@ -123,8 +126,12 @@ const PresupuestoCC = ({ centroCosto, empresa, montoSolicitado }) => {
 };
 
 const AprobadorDetalle = ({ solicitud, onBack, onAction, readonly }) => {
-  const empresa = EMPRESAS.find((e) => e.id === solicitud.empresa);
-  const cc = CENTROS_COSTO[solicitud.empresa].find((c) => c.id === solicitud.centroCosto);
+  const empresa = solicitud.empresaInfo
+    ? { abrev: solicitud.empresaInfo.nombre_corto, nombre: solicitud.empresaInfo.razon_social }
+    : EMPRESAS.find((e) => e.id === solicitud.empresa) || { abrev: solicitud.empresa || '—', nombre: solicitud.empresa || '—' };
+  const cc = solicitud.centroCostoInfo
+    ? { codigo: solicitud.centroCostoInfo.codigo, nombre: solicitud.centroCostoInfo.nombre, presupuestoAnual: 0, gastoYtd: 0 }
+    : (CENTROS_COSTO[solicitud.empresa] || []).find((c) => c.id === solicitud.centroCosto) || { codigo: '—', nombre: '—', presupuestoAnual: 0, gastoYtd: 0 };
   const tipo = TIPOS_COMPRA.find((t) => t.id === solicitud.tipo);
   const [modal, setModal] = React.useState(null);
 

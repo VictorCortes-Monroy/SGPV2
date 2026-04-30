@@ -32,8 +32,13 @@ const TimelineHorizontal = ({ estadoActual }) => {
 };
 
 const TrackingView = ({ solicitud, onBack }) => {
-  const empresa = EMPRESAS.find((e) => e.id === solicitud.empresa);
-  const cc = CENTROS_COSTO[solicitud.empresa].find((c) => c.id === solicitud.centroCosto);
+  // Priorizar info embebida del API; fallback al mock para compatibilidad off-line.
+  const empresa = solicitud.empresaInfo
+    ? { abrev: solicitud.empresaInfo.nombre_corto, nombre: solicitud.empresaInfo.razon_social }
+    : EMPRESAS.find((e) => e.id === solicitud.empresa) || { abrev: solicitud.empresa || '—', nombre: solicitud.empresa || '—' };
+  const cc = solicitud.centroCostoInfo
+    ? { codigo: solicitud.centroCostoInfo.codigo, nombre: solicitud.centroCostoInfo.nombre, presupuestoAnual: 0, gastoYtd: 0 }
+    : (CENTROS_COSTO[solicitud.empresa] || []).find((c) => c.id === solicitud.centroCosto) || { codigo: '—', nombre: '—' };
   const tipo = TIPOS_COMPRA.find((t) => t.id === solicitud.tipo);
   const idxActual = ESTADOS.findIndex((e) => e.id === solicitud.estadoActual);
   const estadoActual = ESTADOS[idxActual];
