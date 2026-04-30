@@ -117,7 +117,43 @@ const useDataSource = ({ source, userId, baseUrl }) => {
   const crearSolicitud = async (form) => {
     if (source === 'api') {
       try {
-        const created = await Api.createSolicitud(buildCreatePayload(form));
+        // El form usa string ids del mock (e.g. "demo", "cc-1") y descripciones
+        // libres para items. El backend exige numeric ids y un item_id del catálogo.
+        // Mapeamos: empresa string → backendId, cc string → backendId.
+        // Los items siguen siendo descripción libre del usuario; se persiste como
+        // `especificacion` y se hardcodea `item_id: 1` (placeholder hasta agregar
+        // un picker real contra /catalogo/items/search).
+        const empresaObj = empresas.find((e) => e.id === form.empresa);
+        const ccs = centros[form.empresa] || [];
+        const ccObj = ccs.find((c) => c.id === form.centroCosto);
+
+        if (!empresaObj?.backendId) {
+          return { ok: false, error: { message: `Empresa "${form.empresa}" no resuelta a backend ID. Recargá la página.` } };
+        }
+        if (!ccObj?.backendId) {
+          return { ok: false, error: { message: `Centro de costo "${form.centroCosto}" no resuelto a backend ID.` } };
+        }
+
+        const lineas = (form.items || [])
+          .filter((it) => (it.descripcion || '').trim())
+          .map((it) => ({
+            item_id: 1, // TODO: reemplazar con picker real del catálogo
+            cantidad: it.cantidad || 1,
+            especificacion: it.descripcion?.trim() || null,
+          }));
+
+        const payload = {
+          empresa_id: empresaObj.backendId,
+          centro_costo_id: ccObj.backendId,
+          tipo: form.tipo === 'servicios' ? 'SERVICIO' : 'BIEN',
+          urgencia: URGENCIA_FRONTEND[form.urgencia] || 'NORMAL',
+          descripcion: form.descripcion,
+          justificacion: form.justificacion || null,
+          fecha_requerida: form.fechaRequerida,
+          lineas,
+        };
+
+        const created = await Api.createSolicitud(payload);
         await Api.submit(created.id, 'Enviada desde Acquira');
         await loadFromApi();
         return { ok: true, id: `SC-${created.id}` };

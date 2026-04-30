@@ -11,7 +11,7 @@ const tiposAdjunto = (nombre) => {
 const iconAdjunto = (tipo) => ({ pdf: 'file', img: 'image', xls: 'sheet', file: 'file' })[tipo] || 'file';
 
 // Sección: Empresa + Tipo
-const SectionEmpresa = ({ form, set, errors }) => (
+const SectionEmpresa = ({ form, set, errors, empresas }) => (
   <div className="form-section">
     <div className="section-head">
       <div className="section-num">1</div>
@@ -22,7 +22,7 @@ const SectionEmpresa = ({ form, set, errors }) => (
     </div>
     <Field label="Empresa" required error={errors.empresa}>
       <div className="empresa-cards">
-        {EMPRESAS.map((e) => (
+        {empresas.map((e) => (
           <button
             key={e.id}
             type="button"
@@ -63,8 +63,8 @@ const SectionEmpresa = ({ form, set, errors }) => (
 );
 
 // Sección: Detalle (descripción + centro de costo)
-const SectionDetalle = ({ form, set, errors }) => {
-  const ccDisponibles = form.empresa ? CENTROS_COSTO[form.empresa] : [];
+const SectionDetalle = ({ form, set, errors, centros }) => {
+  const ccDisponibles = form.empresa ? (centros[form.empresa] || []) : [];
   return (
     <div className="form-section">
       <div className="section-head">
@@ -100,6 +100,14 @@ const SectionDetalle = ({ form, set, errors }) => {
             <option key={c.id} value={c.id}>{c.codigo} · {c.nombre} — {c.proyecto}</option>
           ))}
         </Select>
+      </Field>
+      <Field label="Fecha requerida" required error={errors.fechaRequerida} hint="¿Para cuándo se necesita la compra? (mínimo, hoy)">
+        <Input
+          type="date"
+          value={form.fechaRequerida}
+          min={new Date().toISOString().slice(0, 10)}
+          onChange={(e) => set({ fechaRequerida: e.target.value })}
+        />
       </Field>
     </div>
   );
@@ -248,9 +256,9 @@ const SectionAdjuntos = ({ form, set }) => {
 };
 
 // Resumen lateral
-const ResumenLateral = ({ form }) => {
-  const empresa = EMPRESAS.find((e) => e.id === form.empresa);
-  const cc = form.empresa ? CENTROS_COSTO[form.empresa].find((c) => c.id === form.centroCosto) : null;
+const ResumenLateral = ({ form, empresas, centros }) => {
+  const empresa = empresas.find((e) => e.id === form.empresa);
+  const cc = form.empresa ? (centros[form.empresa] || []).find((c) => c.id === form.centroCosto) : null;
   const tipo = TIPOS_COMPRA.find((t) => t.id === form.tipo);
   const completitud = (() => {
     let n = 0, total = 5;
@@ -301,9 +309,15 @@ const ResumenLateral = ({ form }) => {
   );
 };
 
-const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel }) => {
+const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel, empresas: empresasProp, centros: centrosProp }) => {
+  // Si data-source nos pasó empresas/centros del API, usamos esos.
+  // Caso contrario fallback al mock para que el preview off-line siga funcionando.
+  const empresas = (empresasProp && empresasProp.length) ? empresasProp : EMPRESAS;
+  const centros = (centrosProp && Object.keys(centrosProp).length) ? centrosProp : CENTROS_COSTO;
+
   const [form, setForm] = React.useState({
     empresa: '', tipo: '', titulo: '', descripcion: '', centroCosto: '',
+    fechaRequerida: '',
     items: [{ id: 1, descripcion: '', cantidad: 1, unidad: 'unidad' }],
     adjuntos: [],
   });
@@ -318,7 +332,12 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel }) => {
     if (!form.tipo) e.tipo = 'Selecciona el tipo de compra';
     if (!form.titulo.trim()) e.titulo = 'Agrega un título';
     if (!form.descripcion.trim()) e.descripcion = 'Agrega una descripción';
+    else if (form.descripcion.trim().length < 10) e.descripcion = 'La descripción debe tener al menos 10 caracteres';
     if (!form.centroCosto) e.centroCosto = 'Selecciona un centro de costo';
+    if (!form.fechaRequerida) e.fechaRequerida = 'Indica para cuándo se necesita';
+    else if (form.fechaRequerida < new Date().toISOString().slice(0, 10)) {
+      e.fechaRequerida = 'La fecha no puede ser anterior a hoy';
+    }
     if (!form.items.some((i) => i.descripcion.trim())) e.items = 'Agrega al menos un item con descripción';
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -332,8 +351,8 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel }) => {
   if (layout === 'single') {
     return (
       <div className="form-container form-single">
-        <SectionEmpresa form={form} set={set} errors={errors} />
-        <SectionDetalle form={form} set={set} errors={errors} />
+        <SectionEmpresa form={form} set={set} errors={errors} empresas={empresas} />
+        <SectionDetalle form={form} set={set} errors={errors} centros={centros} />
         <SectionItems form={form} set={set} errors={errors} />
         <SectionAdjuntos form={form} set={set} />
         <div className="form-actions">
@@ -352,8 +371,8 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel }) => {
     return (
       <div className="form-container form-twocol">
         <div className="form-twocol-main">
-          <SectionEmpresa form={form} set={set} errors={errors} />
-          <SectionDetalle form={form} set={set} errors={errors} />
+          <SectionEmpresa form={form} set={set} errors={errors} empresas={empresas} />
+          <SectionDetalle form={form} set={set} errors={errors} centros={centros} />
           <SectionItems form={form} set={set} errors={errors} />
           <SectionAdjuntos form={form} set={set} />
           <div className="form-actions">
@@ -365,7 +384,7 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel }) => {
           </div>
         </div>
         <aside className="form-twocol-side">
-          <ResumenLateral form={form} />
+          <ResumenLateral form={form} empresas={empresas} centros={centros} />
         </aside>
       </div>
     );
@@ -373,8 +392,8 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel }) => {
 
   // ── Wizard (stepper)
   const steps = [
-    { label: 'Empresa', component: <SectionEmpresa form={form} set={set} errors={errors} /> },
-    { label: 'Detalle', component: <SectionDetalle form={form} set={set} errors={errors} /> },
+    { label: 'Empresa', component: <SectionEmpresa form={form} set={set} errors={errors} empresas={empresas} /> },
+    { label: 'Detalle', component: <SectionDetalle form={form} set={set} errors={errors} centros={centros} /> },
     { label: 'Items', component: <SectionItems form={form} set={set} errors={errors} /> },
     { label: 'Respaldos', component: <SectionAdjuntos form={form} set={set} /> },
   ];

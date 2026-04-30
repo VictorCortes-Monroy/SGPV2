@@ -67,7 +67,7 @@
       const [notifOpen, setNotifOpen] = React.useState(false);
 
       const ds = useDataSource({ source: t.dataSource, userId: t.apiUserId, baseUrl: t.apiBaseUrl });
-      const { solicitudes, conn } = ds;
+      const { solicitudes, conn, empresas, centros } = ds;
 
       const showToast = (msg) => { setToast({ msg }); setTimeout(() => setToast(null), 5000); };
 
@@ -162,7 +162,13 @@
                 <Dashboard solicitudes={solicitudes} onOpen={openSolicitud} onNueva={() => navigate('nueva')} />
               )}
               {role === 'solicitante' && view === 'nueva' && (
-                <NuevaSolicitud layout={t.formLayout} onSubmit={submitNueva} onCancel={() => navigate('dashboard')} />
+                <NuevaSolicitud
+                  layout={t.formLayout}
+                  empresas={empresas}
+                  centros={centros}
+                  onSubmit={submitNueva}
+                  onCancel={() => navigate('dashboard')}
+                />
               )}
               {role === 'solicitante' && view === 'tracking' && active && (
                 <TrackingView solicitud={active} onBack={() => navigate('dashboard')} />
