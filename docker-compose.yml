@@ -35,6 +35,7 @@ services:
       - ./alembic:/app/alembic
       - ./scripts:/app/scripts
       - ./tests:/app/tests
+      - ./frontend:/app/frontend
       - sgp_adjuntos_data:/data
     command: >
       sh -c "alembic upgrade head &&

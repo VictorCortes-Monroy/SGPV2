@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Acquira — Solicitudes de Pedido</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles-aprobador.css">
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="api.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="data.jsx"></script>
+  <script type="text/babel" src="icons.jsx"></script>
+  <script type="text/babel" src="ui.jsx"></script>
+  <script type="text/babel" src="layout.jsx"></script>
+  <script type="text/babel" src="dashboard.jsx"></script>
+  <script type="text/babel" src="form.jsx"></script>
+  <script type="text/babel" src="tracking.jsx"></script>
+  <script type="text/babel" src="role-selector.jsx"></script>
+  <script type="text/babel" src="aprobador-bandeja.jsx"></script>
+  <script type="text/babel" src="aprobador-detalle.jsx"></script>
+  <script type="text/babel" src="notifications.jsx"></script>
+  <script type="text/babel" src="data-source.jsx"></script>
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+
+  <script type="text/babel">
+    const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+      "formLayout": "wizard",
+      "bandejaLayout": "lista",
+      "dataSource": "api",
+      "apiUserId": "user_victor",
+      "apiBaseUrl": "https:\/\/sgpv2-production.up.railway.app"
+    }/*EDITMODE-END*/;
+
+    const ConnBadge = ({ conn, onRetry }) => {
+      const map = {
+        mock:      { cls: 'conn-mock',      icon: 'folder', label: 'Mock' },
+        loading:   { cls: 'conn-loading',   icon: 'clock',  label: 'Conectando' },
+        connected: { cls: 'conn-connected', icon: 'check',  label: 'API conectada' },
+        error:     { cls: 'conn-error',     icon: 'alert',  label: 'API: error' },
+      };
+      const c = map[conn.status] || map.mock;
+      return (
+        <div className={`conn-badge ${c.cls}`} title={conn.detail} onClick={onRetry}>
+          <Icon name={c.icon} size={12} />
+          <span>{c.label}</span>
+          <span className="conn-detail">· {conn.detail}</span>
+        </div>
+      );
+    };
+
+    function App() {
+      const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+      const [role, setRole] = React.useState(null);
+      const [view, setView] = React.useState('dashboard');
+      const [activeId, setActiveId] = React.useState(null);
+      const [mobileMenu, setMobileMenu] = React.useState(false);
+      const [toast, setToast] = React.useState(null);
+      const [notifOpen, setNotifOpen] = React.useState(false);
+
+      const ds = useDataSource({ source: t.dataSource, userId: t.apiUserId, baseUrl: t.apiBaseUrl });
+      const { solicitudes, conn } = ds;
+
+      const showToast = (msg) => { setToast({ msg }); setTimeout(() => setToast(null), 5000); };
+
+      const selectRole = (r) => { setRole(r); setView(r === 'solicitante' ? 'dashboard' : 'bandeja'); setActiveId(null); };
+      const navigate = (v) => { setView(v); setActiveId(null); window.scrollTo(0, 0); };
+      const openSolicitud = (id) => { setActiveId(id); setView(role === 'aprobador' ? 'aprob-detalle' : 'tracking'); window.scrollTo(0, 0); };
+
+      const submitNueva = async (form) => {
+        const res = await ds.crearSolicitud(form);
+        if (res.ok) {
+          setActiveId(res.id);
+          setView('tracking');
+          showToast(`Solicitud ${res.id} enviada.`);
+        } else {
+          showToast(`Error: ${res.error?.message || 'no se pudo crear'}`);
+        }
+        window.scrollTo(0, 0);
+      };
+
+      const handleAprobAction = async (tipo, mensaje) => {
+        const sol = solicitudes.find((s) => s.id === activeId);
+        if (!sol) return;
+        const fn = tipo === 'aprobar' ? ds.aprobar : tipo === 'rechazar' ? ds.rechazar : ds.solicitarCambios;
+        const res = await fn(sol, mensaje);
+        if (res.ok) {
+          const verbo = tipo === 'aprobar' ? 'aprobada' : tipo === 'rechazar' ? 'rechazada' : 'devuelta con observaciones';
+          showToast(`Solicitud ${activeId} ${verbo}.`);
+          if (tipo !== 'cambios') { setView('bandeja'); setActiveId(null); }
+        } else {
+          showToast(`Error: ${res.error?.message || 'no se pudo procesar'}`);
+        }
+      };
+
+      const active = solicitudes.find((s) => s.id === activeId);
+      const pendientesCount = solicitudes.filter((s) => s.estadoActual === 'revision').length;
+
+      if (!role) {
+        return (
+          <>
+            <RoleSelector onSelect={selectRole} />
+            <div className="conn-floater"><ConnBadge conn={conn} onRetry={ds.refresh} /></div>
+            <TweaksPanel title="Tweaks">
+              <TweakSection label="Origen de datos" />
+              <TweakRadio
+                label="Fuente"
+                value={t.dataSource}
+                options={[{ value: 'mock', label: 'Mock' }, { value: 'api', label: 'API real' }]}
+                onChange={(v) => setTweak('dataSource', v)}
+              />
+              {t.dataSource === 'api' && (
+                <>
+                  <TweakText label="Base URL" value={t.apiBaseUrl} onChange={(v) => setTweak('apiBaseUrl', v)} />
+                  <TweakText label="X-User-Id (clerk_user_id)" value={t.apiUserId} onChange={(v) => setTweak('apiUserId', v)} />
+                  <TweakButton onClick={ds.refresh}>Reconectar</TweakButton>
+                </>
+              )}
+              <div className="tweak-tip">Cambia entre datos locales y la API real (sgpv2-production.up.railway.app). El backend requiere CORS habilitado para tu origen.</div>
+            </TweaksPanel>
+          </>
+        );
+      }
+
+      let title, subtitle, breadcrumb = null;
+      if (role === 'solicitante') {
+        if (view === 'dashboard') { title = 'Mis solicitudes'; subtitle = 'Revisa el estado de tus solicitudes de pedido'; }
+        else if (view === 'nueva') { title = 'Nueva solicitud de pedido'; subtitle = 'Completa los datos y envíala a aprobación'; breadcrumb = 'Solicitudes'; }
+        else if (view === 'tracking' && active) { title = 'Seguimiento de solicitud'; breadcrumb = 'Solicitudes'; }
+      } else {
+        if (view === 'bandeja') { title = 'Bandeja de aprobación'; subtitle = `Solicitudes que esperan tu decisión`; }
+        else if (view === 'historico') { title = 'Histórico de solicitudes'; subtitle = 'Solicitudes ya procesadas'; }
+        else if (view === 'aprob-detalle' && active) { title = 'Revisar solicitud'; breadcrumb = 'Bandeja'; }
+      }
+
+      return (
+        <div className="app">
+          <Sidebar
+            role={role} currentView={view} onNavigate={navigate}
+            mobileOpen={mobileMenu} onMobileClose={() => setMobileMenu(false)}
+            pendientesCount={pendientesCount} onSwitchRole={() => setRole(null)}
+          />
+          <div className="main">
+            <TopBar
+              title={title} subtitle={subtitle} breadcrumb={breadcrumb}
+              onMobileMenu={() => setMobileMenu(true)}
+              onNotifClick={() => setNotifOpen(true)}
+              notifCount={role === 'aprobador' ? 3 : 1}
+              actions={<ConnBadge conn={conn} onRetry={ds.refresh} />}
+            />
+            <main className="content">
+              {ds.loading && <div className="loading-bar">Cargando datos del backend…</div>}
+              {role === 'solicitante' && view === 'dashboard' && (
+                <Dashboard solicitudes={solicitudes} onOpen={openSolicitud} onNueva={() => navigate('nueva')} />
+              )}
+              {role === 'solicitante' && view === 'nueva' && (
+                <NuevaSolicitud layout={t.formLayout} onSubmit={submitNueva} onCancel={() => navigate('dashboard')} />
+              )}
+              {role === 'solicitante' && view === 'tracking' && active && (
+                <TrackingView solicitud={active} onBack={() => navigate('dashboard')} />
+              )}
+              {role === 'aprobador' && view === 'bandeja' && (
+                <BandejaAprobador solicitudes={solicitudes} onOpen={openSolicitud} layout={t.bandejaLayout} />
+              )}
+              {role === 'aprobador' && view === 'historico' && (
+                <BandejaAprobador
+                  solicitudes={solicitudes.filter(s => s.estadoActual !== 'revision' && s.estadoActual !== 'borrador')}
+                  onOpen={openSolicitud} layout={t.bandejaLayout}
+                />
+              )}
+              {role === 'aprobador' && view === 'aprob-detalle' && active && (
+                <AprobadorDetalle solicitud={active} onBack={() => navigate('bandeja')}
+                  onAction={handleAprobAction} readonly={active.estadoActual !== 'revision'} />
+              )}
+            </main>
+          </div>
+
+          <NotificationCenter open={notifOpen} onClose={() => setNotifOpen(false)} />
+
+          {toast && (
+            <div className="toast">
+              <div className="toast-icon"><Icon name="check" size={16} /></div>
+              <div>{toast.msg}</div>
+            </div>
+          )}
+
+          <TweaksPanel title="Tweaks">
+            <TweakSection label="Origen de datos" />
+            <TweakRadio
+              label="Fuente"
+              value={t.dataSource}
+              options={[{ value: 'mock', label: 'Mock' }, { value: 'api', label: 'API real' }]}
+              onChange={(v) => setTweak('dataSource', v)}
+            />
+            {t.dataSource === 'api' && (
+              <>
+                <TweakText label="Base URL" value={t.apiBaseUrl} onChange={(v) => setTweak('apiBaseUrl', v)} />
+                <TweakText label="X-User-Id" value={t.apiUserId} onChange={(v) => setTweak('apiUserId', v)} />
+                <TweakButton onClick={ds.refresh}>Reconectar</TweakButton>
+                <div className="tweak-tip" style={{paddingTop:6}}>
+                  Estado: <strong>{conn.status}</strong><br/>{conn.detail}
+                </div>
+              </>
+            )}
+            {role === 'solicitante' && (
+              <>
+                <TweakSection label="Formulario de solicitud" />
+                <TweakSelect label="Layout" value={t.formLayout}
+                  options={[
+                    { value: 'twocol', label: 'Dos columnas' },
+                    { value: 'single', label: 'Una sola página' },
+                    { value: 'wizard', label: 'Wizard multi-paso' },
+                  ]}
+                  onChange={(v) => setTweak('formLayout', v)} />
+              </>
+            )}
+            {role === 'aprobador' && (
+              <>
+                <TweakSection label="Bandeja de aprobación" />
+                <TweakRadio label="Vista" value={t.bandejaLayout}
+                  options={[
+                    { value: 'tabla', label: 'Tabla' },
+                    { value: 'lista', label: 'Lista' },
+                    { value: 'cards', label: 'Cards' },
+                  ]}
+                  onChange={(v) => setTweak('bandejaLayout', v)} />
+              </>
+            )}
+            <TweakSection label="Sesión" />
+            <TweakButton onClick={() => setRole(null)}>Cambiar de rol</TweakButton>
+          </TweaksPanel>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+
+  <style>
+    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: #1a1f1c; color: #fff; padding: 12px 18px; border-radius: 10px;
+      display: flex; align-items: center; gap: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      font-size: 13.5px; z-index: 1000; animation: toastIn 0.25s ease-out; max-width: 480px; }
+    .toast-icon { width: 24px; height: 24px; border-radius: 50%; background: #047857; display: grid; place-items: center; }
+    @keyframes toastIn { from { transform: translate(-50%, 16px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+    .tweak-tip { font-size: 11px; color: rgba(41,38,27,.55); line-height: 1.4; padding: 8px 4px 0; }
+
+    .conn-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 10px; border-radius: 999px;
+      font-size: 11.5px; font-weight: 500;
+      border: 1px solid var(--border); background: var(--bg-elev);
+      cursor: pointer; transition: all 0.12s;
+    }
+    .conn-badge:hover { background: var(--bg-subtle); }
+    .conn-badge .conn-detail { color: var(--text-faint); font-weight: 400; }
+    .conn-mock { color: var(--text-muted); }
+    .conn-loading { color: var(--accent-amber); border-color: #fcd34d; background: var(--accent-amber-soft); }
+    .conn-connected { color: var(--accent-emerald); border-color: #a7f3d0; background: var(--accent-emerald-soft); }
+    .conn-error { color: var(--accent-red); border-color: #fca5a5; background: #fee2e2; }
+    .conn-floater { position: fixed; top: 16px; right: 16px; z-index: 100; }
+
+    .loading-bar {
+      padding: 10px 14px; background: var(--accent-amber-soft); color: var(--accent-amber);
+      border: 1px solid #fcd34d; border-radius: 8px; font-size: 13px; font-weight: 500;
+      margin-bottom: 16px;
+    }
+  </style>
+</body>
+</html>

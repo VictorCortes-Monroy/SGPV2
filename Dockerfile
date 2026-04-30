@@ -28,6 +28,7 @@ COPY alembic/ ./alembic/
 COPY alembic.ini ./
 COPY scripts/ ./scripts/
 COPY tests/ ./tests/
+COPY frontend/ ./frontend/
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

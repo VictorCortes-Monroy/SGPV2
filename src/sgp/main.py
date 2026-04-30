@@ -2,10 +2,12 @@
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from sgp import __version__
 from sgp.api.v1 import api_v1
@@ -35,9 +37,10 @@ app = FastAPI(
     version=__version__,
     description="API del Sistema de Gestión de Compras (SGP).",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    # Swagger / OpenAPI bajo /api/* para que / quede libre para el frontend.
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
 
 
@@ -75,21 +78,29 @@ async def sgp_error_handler(request: Request, exc: SGPError) -> JSONResponse:
 
 
 # ===== Endpoints raíz =====
-@app.get("/", tags=["root"])
-async def root():
-    return {
-        "name": "SGP API",
-        "version": __version__,
-        "docs": "/docs",
-        "health": "/health",
-    }
-
-
 @app.get("/health", tags=["root"])
 async def health():
     """Healthcheck para Railway / Docker / load balancers."""
     return {"status": "ok", "version": __version__}
 
 
-# ===== Routers =====
+# ===== Routers de la API =====
+# IMPORTANTE: incluir routers ANTES del mount de StaticFiles, para que
+# /api/v1/* y /health tengan prioridad sobre el catch-all del frontend.
 app.include_router(api_v1)
+
+
+# ===== Frontend estático =====
+# Sirve la SPA del prototipo en /. StaticFiles con html=True hace que / mapee
+# a index.html y que rutas no resueltas devuelvan 404 (no es SPA con
+# client-side routing — es un single-page sin rutas anidadas).
+# Si el directorio no existe (entorno de tests sin frontend buildeado), se
+# omite el mount silenciosamente.
+_frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
+if _frontend_dir.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="frontend")
+else:
+    logger.warning(
+        f"Carpeta frontend no encontrada en {_frontend_dir}; "
+        "la API servirá solo endpoints (sin SPA)."
+    )

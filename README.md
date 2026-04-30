@@ -37,9 +37,10 @@ docker compose up
 
 Listo. La API queda en **http://localhost:8000**.
 
+- **Frontend (SPA del prototipo):** http://localhost:8000/
 - Healthcheck: `curl http://localhost:8000/health`
-- OpenAPI / Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+- OpenAPI / Swagger UI: http://localhost:8000/api/docs
+- ReDoc: http://localhost:8000/api/redoc
 
 ### Opción 2: Desarrollo local sin Docker
 
@@ -86,9 +87,9 @@ Ver `docs/SGP_DISENO_TECNICO_v2.md` para el diseño completo.
 ## Estructura del proyecto
 
 ```
-sgp-api/
-├── src/sgp/
-│   ├── core/                       # Configuración, DB, auth, audit, excepciones
+SGPV2/
+├── src/sgp/                        # Backend (FastAPI)
+│   ├── core/                       # Configuración, DB, auth, audit, excepciones, storage
 │   ├── api/v1.py                   # Agrega todos los routers
 │   ├── modules/
 │   │   ├── usuarios/               # Usuarios y roles
@@ -96,11 +97,19 @@ sgp-api/
 │   │   ├── catalogo/               # Catálogo maestro de items + taxonomía
 │   │   ├── solicitudes/            # ★ Núcleo: SC + state machine
 │   │   │   └── state_machine.py    # ← El corazón del proceso
+│   │   ├── adjuntos/               # Documentos de respaldo (Railway volume)
+│   │   ├── gastos/                 # Resumen comprometido vs ejecutado (finanzas)
 │   │   └── auditoria/              # Audit log inmutable
-│   └── main.py                     # FastAPI app
+│   └── main.py                     # FastAPI app + monta /frontend en /
+├── frontend/                       # SPA del prototipo (HTML + JSX + Babel CDN)
+│   ├── index.html                  # Entry — servida por FastAPI en /
+│   ├── api.js, *.jsx, *.css        # Cliente HTTP y componentes del prototipo
+│   └── ...
 ├── alembic/                        # Migraciones (Alembic con async)
-├── tests/                          # 33 tests (state machine + service)
+├── tests/                          # 117 tests (state machine + service + adjuntos + gastos)
 ├── scripts/seed.py                 # Datos demo
+├── scripts/start.sh                # Entrypoint Railway (migra + seed condicional + uvicorn)
+├── docs/                           # Spec de transiciones, notificaciones pendientes
 ├── docker-compose.yml              # Stack local: API + Postgres
 ├── Dockerfile
 ├── railway.json                    # Despliegue en Railway
@@ -445,7 +454,7 @@ Railway redeploya automáticamente al agregar variables. También se puede forza
    curl https://<tu-dominio>/health
    # → {"status":"ok","version":"0.1.0"}
    ```
-3. Swagger UI: `https://<tu-dominio>/docs`.
+3. Swagger UI: `https://<tu-dominio>/api/docs`.
 4. Smoke E2E (con seed cargado):
    ```bash
    curl -H "X-User-Id: user_victor" https://<tu-dominio>/api/v1/usuarios/me
