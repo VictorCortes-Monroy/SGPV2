@@ -72,11 +72,19 @@ def upgrade() -> None:
     # Crear el enum nuevo
     new_enum = sa.Enum(*NEW_STATUS_VALUES, name="sc_status_enum_v2")
     new_enum.create(op.get_bind(), checkfirst=False)
+    # Drop el server_default antes del ALTER TYPE: Postgres no puede castear
+    # el default automáticamente al enum nuevo aunque el valor exista en ambos.
+    op.execute("ALTER TABLE solicitudes_compra ALTER COLUMN status DROP DEFAULT")
     # Cambiar la columna al nuevo tipo (cast vía text)
     op.execute(
         "ALTER TABLE solicitudes_compra "
         "ALTER COLUMN status TYPE sc_status_enum_v2 "
         "USING status::text::sc_status_enum_v2"
+    )
+    # Re-aplicar el default con el tipo nuevo
+    op.execute(
+        "ALTER TABLE solicitudes_compra "
+        "ALTER COLUMN status SET DEFAULT 'draft'::sc_status_enum_v2"
     )
     # Drop del enum viejo, rename del nuevo
     op.execute("DROP TYPE sc_status_enum")
