@@ -72,6 +72,12 @@ def upgrade() -> None:
     # Crear el enum nuevo
     new_enum = sa.Enum(*NEW_STATUS_VALUES, name="sc_status_enum_v2")
     new_enum.create(op.get_bind(), checkfirst=False)
+    # Drop the column default BEFORE changing type — PostgreSQL cannot
+    # auto-cast the existing default ('draft'::sc_status_enum) to the new type.
+    op.execute(
+        "ALTER TABLE solicitudes_compra "
+        "ALTER COLUMN status DROP DEFAULT"
+    )
     # Cambiar la columna al nuevo tipo (cast vía text)
     op.execute(
         "ALTER TABLE solicitudes_compra "
@@ -81,6 +87,11 @@ def upgrade() -> None:
     # Drop del enum viejo, rename del nuevo
     op.execute("DROP TYPE sc_status_enum")
     op.execute("ALTER TYPE sc_status_enum_v2 RENAME TO sc_status_enum")
+    # Restore the column default now that the enum has been renamed back
+    op.execute(
+        "ALTER TABLE solicitudes_compra "
+        "ALTER COLUMN status SET DEFAULT 'draft'"
+    )
 
     # --- 3. Link CatalogoItem a CentroCosto --------------------------------
     # Agregar columna con DEFAULT 1 para los items existentes (asignados a
