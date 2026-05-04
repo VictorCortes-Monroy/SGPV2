@@ -117,30 +117,38 @@ const useDataSource = ({ source, userId, baseUrl }) => {
   const crearSolicitud = async (form) => {
     if (source === 'api') {
       try {
-        // El form usa string ids del mock (e.g. "demo", "cc-1") y descripciones
-        // libres para items. El backend exige numeric ids y un item_id del catálogo.
-        // Mapeamos: empresa string → backendId, cc string → backendId.
-        // Los items siguen siendo descripción libre del usuario; se persiste como
-        // `especificacion` y se hardcodea `item_id: 1` (placeholder hasta agregar
-        // un picker real contra /catalogo/items/search).
+        // Resolver string ids del frontend → numeric ids del backend.
         const empresaObj = empresas.find((e) => e.id === form.empresa);
         const ccs = centros[form.empresa] || [];
         const ccObj = ccs.find((c) => c.id === form.centroCosto);
 
         if (!empresaObj?.backendId) {
-          return { ok: false, error: { message: `Empresa "${form.empresa}" no resuelta a backend ID. Recargá la página.` } };
+          return { ok: false, error: { message: `Empresa "${form.empresa}" no resuelta a backend ID.` } };
         }
         if (!ccObj?.backendId) {
-          return { ok: false, error: { message: `Centro de costo "${form.centroCosto}" no resuelto a backend ID.` } };
+          return { ok: false, error: { message: `Centro de costo "${form.centroCosto}" no resuelto.` } };
         }
 
-        const lineas = (form.items || [])
-          .filter((it) => (it.descripcion || '').trim())
-          .map((it) => ({
-            item_id: 1, // TODO: reemplazar con picker real del catálogo
-            cantidad: it.cantidad || 1,
-            especificacion: it.descripcion?.trim() || null,
-          }));
+        // Items: el form ya viene con `itemId` real (del picker del catálogo).
+        // Si alguno no tiene itemId (no fue seleccionado del catálogo ni creado
+        // como nuevo), rebota con error claro.
+        const items = (form.items || []).filter((it) => it.itemId);
+        const sinItemId = (form.items || []).filter((it) => !it.itemId);
+        if (sinItemId.length > 0) {
+          return {
+            ok: false,
+            error: { message: `Hay ${sinItemId.length} item(s) sin seleccionar del catálogo. Usá el buscador o creá un item nuevo.` },
+          };
+        }
+        if (items.length === 0) {
+          return { ok: false, error: { message: 'Agregá al menos un item desde el catálogo.' } };
+        }
+
+        const lineas = items.map((it) => ({
+          item_id: it.itemId,
+          cantidad: it.cantidad || 1,
+          especificacion: (it.especificacion || '').trim() || null,
+        }));
 
         const payload = {
           empresa_id: empresaObj.backendId,
@@ -156,11 +164,6 @@ const useDataSource = ({ source, userId, baseUrl }) => {
         const created = await Api.createSolicitud(payload);
         await Api.submit(created.id, 'Enviada desde Acquira');
         await loadFromApi();
-        // Importante: devolvemos `created.numero` (ej "SC-2026-000060"), que es
-        // el mismo id que adaptSolicitud usa al listar — así submitNueva puede
-        // hacer find() en la lista y renderizar el tracking de la SC recién
-        // creada. Si devolviéramos `SC-${id}`, el find falla silenciosamente
-        // y la pantalla de tracking queda vacía.
         return { ok: true, id: created.numero };
       } catch (e) { return { ok: false, error: e }; }
     }
@@ -171,7 +174,6 @@ const useDataSource = ({ source, userId, baseUrl }) => {
       fechaSolicitud: new Date().toISOString().slice(0, 10),
       urgencia: form.urgencia || 'media',
       fechaRequerida: form.fechaRequerida || '2026-05-15',
-      montoEstimado: form.montoEstimado || (form.items || []).reduce((s, it) => s + (it.precioUnit || 0) * it.cantidad, 0),
       solicitante: USUARIOS.solicitante,
       eventos: [
         { id: 'e1', estado: 'solicitada', fecha: new Date().toISOString().slice(0, 16).replace('T', ' '), actor: USUARIOS.solicitante.nombre, actorRol: 'Solicitante', tipo: 'estado' },

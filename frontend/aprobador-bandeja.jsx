@@ -38,7 +38,6 @@ const BandejaTabla = ({ solicitudes, onOpen }) => (
           <th>Solicitud</th>
           <th>Solicitante</th>
           <th>Centro de costo</th>
-          <th>Monto</th>
           <th>Urgencia</th>
           <th>Requerida</th>
           <th></th>
@@ -72,7 +71,6 @@ const BandejaTabla = ({ solicitudes, onOpen }) => (
                 <div className="cell-cc">{cc?.nombre}</div>
                 <div className="cell-sub">{cc?.codigo}</div>
               </td>
-              <td className="cell-monto">{formatCLP(s.montoEstimado)}</td>
               <td><UrgenciaBadge urgencia={s.urgencia} /></td>
               <td><FechaRequerida fecha={s.fechaRequerida} /></td>
               <td><Icon name="chevronRight" size={16} className="row-chevron" /></td>
@@ -105,7 +103,6 @@ const BandejaLista = ({ solicitudes, onOpen }) => (
                 <span className="empresa-pill empresa-pill-sm">{empresa.abrev}</span>
                 <UrgenciaBadge urgencia={s.urgencia} />
                 <FechaRequerida fecha={s.fechaRequerida} />
-                <span className="lista-monto">{formatCLP(s.montoEstimado)}</span>
               </div>
               <div className="lista-titulo">{s.titulo}</div>
               <div className="lista-meta">
@@ -149,7 +146,7 @@ const BandejaCards = ({ solicitudes, onOpen }) => (
           <dl className="bandeja-card-grid">
             <div><dt>Solicitante</dt><dd>{s.solicitante.nombre}</dd></div>
             <div><dt>Centro de costo</dt><dd>{cc?.nombre}</dd></div>
-            <div><dt>Monto estimado</dt><dd className="bandeja-monto">{formatCLP(s.montoEstimado)}</dd></div>
+            <div><dt>Items</dt><dd>{s.items.length}</dd></div>
             <div><dt>Requerida</dt><dd><FechaRequerida fecha={s.fechaRequerida} /></dd></div>
           </dl>
           <div className="bandeja-card-foot">
@@ -182,11 +179,9 @@ const BandejaAprobador = ({ solicitudes, onOpen, layout = 'tabla' }) => {
         return ord[a.urgencia] - ord[b.urgencia];
       }
       if (orden === 'fecha') return new Date(a.fechaRequerida) - new Date(b.fechaRequerida);
-      if (orden === 'monto') return b.montoEstimado - a.montoEstimado;
       return 0;
     });
 
-  const totalPendiente = pendientes.reduce((s, x) => s + x.montoEstimado, 0);
   const urgentes = pendientes.filter((s) => s.urgencia === 'alta').length;
   const vencidas = pendientes.filter((s) => diasHasta(s.fechaRequerida) <= 0).length;
 
@@ -209,9 +204,9 @@ const BandejaAprobador = ({ solicitudes, onOpen, layout = 'tabla' }) => {
           <div className="stat-hint">requieren acción inmediata</div>
         </Card>
         <Card className="stat-card">
-          <div className="stat-label">Monto total pendiente</div>
-          <div className="stat-value stat-monto">{formatCLPCompact(totalPendiente)}</div>
-          <div className="stat-hint">{formatCLP(totalPendiente)}</div>
+          <div className="stat-label">Total pendientes</div>
+          <div className="stat-value">{pendientes.length}</div>
+          <div className="stat-hint">solicitudes en cola</div>
         </Card>
       </div>
 
@@ -232,7 +227,6 @@ const BandejaAprobador = ({ solicitudes, onOpen, layout = 'tabla' }) => {
         <Select value={orden} onChange={(e) => setOrden(e.target.value)}>
           <option value="urgencia">Por urgencia</option>
           <option value="fecha">Por fecha requerida</option>
-          <option value="monto">Por monto</option>
         </Select>
       </div>
 

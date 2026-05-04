@@ -5,7 +5,6 @@ Idempotente: se puede correr múltiples veces sin duplicar.
 
 import asyncio
 import sys
-from decimal import Decimal
 from pathlib import Path
 
 # Permitir imports desde src/
@@ -66,22 +65,42 @@ FAMILIAS_DEMO = [
     ("Repuestos Mecánicos", 2, 0),
     ("Servicios", 1, None),
     ("Servicio Técnico", 2, 4),
+    ("Operación", 1, None),
+    ("EPP", 2, 6),
+    ("Administración", 1, None),
+    ("Insumos Oficina", 2, 8),
     ("TI", 1, None),
-    ("Hardware", 2, 6),
+    ("Hardware", 2, 10),
 ]
 
+# Items vinculados al CC al que pertenecen (RN-CAT-CC). Mismo SKU puede
+# aparecer en otro CC como item separado con id distinto.
+# Tupla: (sku, nombre, familia_nombre, cc_codigo, unidad_medida, criticidad)
 ITEMS_DEMO = [
-    # (sku, nombre, familia_nombre, unidad_medida, precio_ref, criticidad)
+    # CC-001 Mantención
     ("ITM-LUB-15W40-205L", "Aceite SAE 15W40 — Tambor 205L", "Aceites Hidráulicos",
-     UnidadMedida.UN, Decimal("450000"), Criticidad.ESTANDAR),
+     "CC-001", UnidadMedida.UN, Criticidad.ESTANDAR),
     ("ITM-LUB-FH-001", "Filtro Hidráulico HF-501", "Lubricantes y Filtros",
-     UnidadMedida.UN, Decimal("85000"), Criticidad.ESTANDAR),
+     "CC-001", UnidadMedida.UN, Criticidad.ESTANDAR),
     ("ITM-REP-CORREA-V40", "Correa V40 Reforzada", "Repuestos Mecánicos",
-     UnidadMedida.UN, Decimal("32000"), Criticidad.CRITICO),
+     "CC-001", UnidadMedida.UN, Criticidad.CRITICO),
     ("SVC-MTTO-PREV-CAT320", "Mantención Preventiva CAT 320 — Servicio", "Servicio Técnico",
-     UnidadMedida.SVC, Decimal("1200000"), Criticidad.CRITICO),
+     "CC-001", UnidadMedida.SVC, Criticidad.CRITICO),
+    # CC-002 Operaciones
+    ("ITM-EPP-CASCO", "Casco de seguridad clase E", "EPP",
+     "CC-002", UnidadMedida.UN, Criticidad.CRITICO),
+    ("ITM-EPP-GUANTES", "Guantes de cuero reforzado (par)", "EPP",
+     "CC-002", UnidadMedida.UN, Criticidad.ESTANDAR),
+    # CC-003 Administración
+    ("ITM-OFI-PAPEL-A4", "Resma papel A4 (paquete 500 hojas)", "Insumos Oficina",
+     "CC-003", UnidadMedida.UN, Criticidad.GENERICO),
+    ("ITM-OFI-TINTA-HP", "Cartucho de tinta HP 664XL Negro", "Insumos Oficina",
+     "CC-003", UnidadMedida.UN, Criticidad.ESTANDAR),
+    # CC-004 TI
     ("ITM-TI-NB-DELL-XPS13", "Notebook Dell XPS 13", "Hardware",
-     UnidadMedida.UN, Decimal("1450000"), Criticidad.ESTANDAR),
+     "CC-004", UnidadMedida.UN, Criticidad.ESTANDAR),
+    ("ITM-TI-MON-24", "Monitor 24'' Full HD", "Hardware",
+     "CC-004", UnidadMedida.UN, Criticidad.ESTANDAR),
 ]
 
 
@@ -188,10 +207,24 @@ async def seed_familias(db) -> dict[str, Familia]:
     return out
 
 
-async def seed_items(db, familias: dict[str, Familia]) -> None:
-    for sku, nombre, fam_nombre, um, precio, crit in ITEMS_DEMO:
+async def seed_items(
+    db,
+    familias: dict[str, Familia],
+    centros: dict[str, CentroCosto],
+) -> None:
+    for sku, nombre, fam_nombre, cc_codigo, um, crit in ITEMS_DEMO:
+        cc = centros.get(cc_codigo)
+        if cc is None:
+            print(f"  ⚠ skip item {sku}: CC {cc_codigo} no encontrado")
+            continue
+        # Idempotencia: check (sku, cc_id) — el unique compuesto del modelo
         existing = (
-            await db.execute(select(CatalogoItem).where(CatalogoItem.sku == sku))
+            await db.execute(
+                select(CatalogoItem).where(
+                    CatalogoItem.sku == sku,
+                    CatalogoItem.centro_costo_id == cc.id,
+                )
+            )
         ).scalar_one_or_none()
         if existing:
             continue
@@ -199,8 +232,8 @@ async def seed_items(db, familias: dict[str, Familia]) -> None:
             sku=sku,
             nombre=nombre,
             familia_id=familias[fam_nombre].id,
+            centro_costo_id=cc.id,
             unidad_medida=um,
-            precio_referencia=precio,
             criticidad=crit,
         )
         db.add(item)
@@ -216,9 +249,10 @@ async def main() -> None:
         empresas = await seed_empresas(db)
         print(f"  ✓ Empresas ({len(empresas)})")
 
-        for emp in empresas.values():
-            ccs = await seed_centros_costo(db, emp)
-            print(f"  ✓ Centros de costo de {emp.nombre_corto} ({len(ccs)})")
+        # Asume 1 sola empresa demo; tomamos sus CCs para vincular items.
+        primera_empresa = next(iter(empresas.values()))
+        ccs = await seed_centros_costo(db, primera_empresa)
+        print(f"  ✓ Centros de costo de {primera_empresa.nombre_corto} ({len(ccs)})")
 
         usuarios = await seed_usuarios(db, roles)
         print(f"  ✓ Usuarios ({len(usuarios)})")
@@ -226,8 +260,8 @@ async def main() -> None:
         familias = await seed_familias(db)
         print(f"  ✓ Familias ({len(familias)})")
 
-        await seed_items(db, familias)
-        print(f"  ✓ Items del catálogo ({len(ITEMS_DEMO)})")
+        await seed_items(db, familias, ccs)
+        print(f"  ✓ Items del catálogo ({len(ITEMS_DEMO)} vinculados a sus CCs)")
 
         await db.commit()
     print("✅ Seed completado.")

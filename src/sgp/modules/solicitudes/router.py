@@ -1,7 +1,6 @@
 """Endpoints HTTP de Solicitudes de Compra."""
 
 from datetime import date
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +37,6 @@ def _serialize_sc(sc, *, adjuntos: list | None = None) -> SolicitudCompraRead:
         urgencia=sc.urgencia,
         descripcion=sc.descripcion,
         justificacion=sc.justificacion,
-        monto_estimado=sc.monto_estimado,
         fecha_requerida=sc.fecha_requerida,
         status=sc.status,
         recotization_cycles=sc.recotization_cycles,
@@ -85,8 +83,6 @@ async def list_solicitudes(  # noqa: PLR0913 — filtros HTTP, todos opcionales
     centro_costo_id: int | None = Query(None, gt=0),
     fecha_desde: date | None = Query(None, description="fecha_requerida >= (incluido)"),
     fecha_hasta: date | None = Query(None, description="fecha_requerida <= (incluido)"),
-    monto_min: Decimal | None = Query(None, ge=0, description="monto_estimado >= (incluido)"),
-    monto_max: Decimal | None = Query(None, ge=0, description="monto_estimado <= (incluido)"),
     numero: str | None = Query(None, description="Substring del número de SC"),
     item_id: int | None = Query(None, gt=0, description="Solo SCs con líneas de este item"),
     q: str | None = Query(
@@ -105,8 +101,6 @@ async def list_solicitudes(  # noqa: PLR0913 — filtros HTTP, todos opcionales
         centro_costo_id=centro_costo_id,
         fecha_desde=fecha_desde,
         fecha_hasta=fecha_hasta,
-        monto_min=monto_min,
-        monto_max=monto_max,
         numero=numero,
         item_id=item_id,
         q=q,

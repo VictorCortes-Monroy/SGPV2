@@ -94,8 +94,8 @@ async def setup_basico(db_session):
         sku="ITM-X",
         nombre="Item",
         familia_id=fam.id,
+        centro_costo_id=cc.id,
         unidad_medida=UnidadMedida.UN,
-        precio_referencia=Decimal("10000"),
         criticidad=Criticidad.ESTANDAR,
     )
     db_session.add(item)

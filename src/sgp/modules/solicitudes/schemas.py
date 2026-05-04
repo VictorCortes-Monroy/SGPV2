@@ -32,10 +32,8 @@ class LineaRead(BaseModel):
 class SolicitudCompraCreate(BaseModel):
     """Payload para crear una SC en estado DRAFT.
 
-    Nota: el solicitante NO ingresa `monto_estimado`. El sistema lo calcula
-    como Σ(cantidad × precio_referencia) de las líneas. Las líneas cuyo item
-    no tiene precio_referencia contribuyen 0 al monto estimado (la cotización
-    posterior corregirá el monto real).
+    No se incluye información económica (montos, costos): la SC describe
+    necesidad cualitativa; los montos viven en cotizaciones (sprint 2).
     """
 
     empresa_id: int = Field(..., gt=0)
@@ -70,7 +68,6 @@ class SolicitudCompraRead(BaseModel):
     urgencia: Urgencia
     descripcion: str
     justificacion: str | None
-    monto_estimado: Decimal
     fecha_requerida: date
     status: SCStatus
     recotization_cycles: int

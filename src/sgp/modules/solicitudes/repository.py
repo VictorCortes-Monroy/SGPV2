@@ -1,7 +1,6 @@
 """Repositorio de Solicitudes de Compra."""
 
 from datetime import UTC, date, datetime
-from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,8 +37,6 @@ class SolicitudCompraRepository:
         centro_costo_id: int | None = None,
         fecha_desde: date | None = None,
         fecha_hasta: date | None = None,
-        monto_min: Decimal | None = None,
-        monto_max: Decimal | None = None,
         numero: str | None = None,
         item_id: int | None = None,
         q: str | None = None,
@@ -52,10 +49,8 @@ class SolicitudCompraRepository:
         - `item_id`: solo SCs que tengan al menos una línea con ese item.
           Usa EXISTS sub-select para no duplicar filas.
         - `q`: búsqueda por substring sobre `descripcion` y `justificacion`
-          (ILIKE simple — anti-duplicidad básica). Para full-text más rico
-          considerar tsvector en una iteración futura.
+          (ILIKE simple — anti-duplicidad básica).
         - `fecha_desde` / `fecha_hasta`: rango sobre `fecha_requerida`.
-        - `monto_min` / `monto_max`: rango sobre `monto_estimado`.
         """
         stmt = select(SolicitudCompra)
         if status is not None:
@@ -70,10 +65,6 @@ class SolicitudCompraRepository:
             stmt = stmt.where(SolicitudCompra.fecha_requerida >= fecha_desde)
         if fecha_hasta is not None:
             stmt = stmt.where(SolicitudCompra.fecha_requerida <= fecha_hasta)
-        if monto_min is not None:
-            stmt = stmt.where(SolicitudCompra.monto_estimado >= monto_min)
-        if monto_max is not None:
-            stmt = stmt.where(SolicitudCompra.monto_estimado <= monto_max)
         if numero is not None and numero.strip():
             stmt = stmt.where(SolicitudCompra.numero.ilike(f"%{numero.strip()}%"))
         if item_id is not None:

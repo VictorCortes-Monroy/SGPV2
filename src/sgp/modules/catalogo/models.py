@@ -1,9 +1,8 @@
 """Modelos: catálogo maestro de ítems y taxonomía jerárquica."""
 
 import enum
-from decimal import Decimal
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from sgp.core.database import Base, TimestampMixin
@@ -44,24 +43,38 @@ class Familia(Base, TimestampMixin):
 
 
 class CatalogoItem(Base, TimestampMixin):
-    """SKU del catálogo maestro. Cada línea de SC, OC y Factura referencia uno."""
+    """SKU del catálogo maestro. Cada línea de SC, OC y Factura referencia uno.
+
+    RN-CAT-CC: cada item pertenece a un único centro de costo. El mismo
+    producto físico en CCs distintos se modela como ítems separados con
+    IDs distintos. El SKU es único *por CC* — el mismo SKU puede repetirse
+    en otros centros de costo.
+    """
 
     __tablename__ = "catalogo_items"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    sku: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    sku: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     nombre: Mapped[str] = mapped_column(String(255), nullable=False)
     familia_id: Mapped[int] = mapped_column(
         ForeignKey("familias.id", ondelete="RESTRICT"), nullable=False
+    )
+    centro_costo_id: Mapped[int] = mapped_column(
+        ForeignKey("centros_costo.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
     )
     unidad_medida: Mapped[UnidadMedida] = mapped_column(
         Enum(UnidadMedida, name="unidad_medida_enum"), nullable=False
     )
     especificacion_tecnica: Mapped[str | None] = mapped_column(Text, nullable=True)
-    precio_referencia: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
     criticidad: Mapped[Criticidad] = mapped_column(
         Enum(Criticidad, name="criticidad_enum"), default=Criticidad.ESTANDAR, nullable=False
     )
     activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     familia: Mapped[Familia] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("sku", "centro_costo_id", name="uq_catalogo_items_sku_cc"),
+    )

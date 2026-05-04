@@ -31,19 +31,26 @@ async def list_familias(
 @router.get("/items/search", response_model=list[CatalogoItemSearch])
 async def search_items(
     q: str = Query(..., min_length=2, description="Query de búsqueda (SKU o nombre)"),
+    centro_costo_id: int | None = Query(
+        None,
+        gt=0,
+        description="Si se provee, filtra solo items vinculados a ese CC (RN-CAT-CC)",
+    ),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     _user: Usuario = Depends(get_current_user),
 ):
-    """Búsqueda predictiva. Usado en formulario de creación de SC."""
+    """Búsqueda predictiva. Usado en el form de SC: el frontend pasa el
+    `centro_costo_id` de la SC para que solo vea items del catálogo de ese CC."""
     repo = CatalogoRepository(db)
-    items = await repo.search_items(q, limit)
+    items = await repo.search_items(q, centro_costo_id=centro_costo_id, limit=limit)
     return [
         CatalogoItemSearch(
             id=i.id,
             sku=i.sku,
             nombre=i.nombre,
             familia_nombre=i.familia.nombre,
+            centro_costo_id=i.centro_costo_id,
             unidad_medida=i.unidad_medida,
         )
         for i in items

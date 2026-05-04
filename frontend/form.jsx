@@ -113,62 +113,267 @@ const SectionDetalle = ({ form, set, errors, centros }) => {
   );
 };
 
-// Sección: Items
-const SectionItems = ({ form, set, errors }) => {
+// Picker inline: input de búsqueda → dropdown con resultados del catálogo
+// (filtrados por CC) + opción "+ Crear nuevo item" que dispara el modal.
+const ItemPicker = ({ row, ccBackendId, onSelect, onCreateNew }) => {
+  const [q, setQ] = React.useState('');
+  const [results, setResults] = React.useState([]);
+  const [open, setOpen] = React.useState(false);
+  const [loading, setLoading] = React.useState(false);
+  const debounceRef = React.useRef(null);
+
+  // Si ya está seleccionado, mostrar el "chip" con SKU + nombre y un ✕.
+  if (row.itemId) {
+    return (
+      <div className="item-selected">
+        <span className="item-selected-sku">{row.sku}</span>
+        <span className="item-selected-nombre">— {row.nombre}</span>
+        <button
+          type="button"
+          className="item-selected-clear"
+          onClick={() => onSelect({ itemId: null, sku: '', nombre: '' })}
+          aria-label="Cambiar item"
+        >
+          <Icon name="x" size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  const search = (text) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      if (!text || text.length < 2 || !ccBackendId) {
+        setResults([]); return;
+      }
+      setLoading(true);
+      try {
+        const items = await Api.searchItems(text, ccBackendId, 10);
+        setResults(items || []);
+      } catch (_e) {
+        setResults([]);
+      } finally { setLoading(false); }
+    }, 250);
+  };
+
+  return (
+    <div className="item-picker" onBlur={(e) => {
+      // Cerrar el dropdown cuando el foco sale del componente entero
+      if (!e.currentTarget.contains(e.relatedTarget)) setTimeout(() => setOpen(false), 150);
+    }}>
+      <Input
+        placeholder={ccBackendId ? '🔍 Buscar item del CC...' : 'Selecciona empresa y CC primero'}
+        value={q}
+        disabled={!ccBackendId}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => { setQ(e.target.value); search(e.target.value); setOpen(true); }}
+      />
+      {open && ccBackendId && (q.length >= 2 || results.length > 0) && (
+        <div className="item-picker-dropdown">
+          {loading && <div className="item-picker-empty">Buscando…</div>}
+          {!loading && results.length === 0 && (
+            <div className="item-picker-empty">No hay items que matcheen.</div>
+          )}
+          {results.map((it) => (
+            <button
+              key={it.id}
+              type="button"
+              className="item-picker-option"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onSelect({ itemId: it.id, sku: it.sku, nombre: it.nombre });
+                setOpen(false); setQ('');
+              }}
+            >
+              <span className="item-picker-sku">{it.sku}</span>
+              <span className="item-picker-nombre">— {it.nombre}</span>
+              <span className="item-picker-fam">{it.familia_nombre}</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            className="item-picker-create"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { onCreateNew(q); setOpen(false); }}
+          >
+            <Icon name="plus" size={12} /> Crear nuevo item en este CC
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Modal de creación de un nuevo CatalogoItem vinculado al CC actual.
+const NuevoItemModal = ({ ccBackendId, ccLabel, initialName, onCreated, onCancel }) => {
+  const [familias, setFamilias] = React.useState([]);
+  const [form, setForm] = React.useState({
+    sku: '',
+    nombre: initialName || '',
+    familia_id: '',
+    unidad_medida: 'UN',
+    criticidad: 'ESTANDAR',
+    especificacion_tecnica: '',
+  });
+  const [error, setError] = React.useState(null);
+  const [submitting, setSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    Api.familias().then(setFamilias).catch(() => setFamilias([]));
+  }, []);
+
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  const submit = async () => {
+    setError(null);
+    if (form.sku.length < 3) return setError('SKU mínimo 3 caracteres.');
+    if (form.nombre.length < 3) return setError('Nombre mínimo 3 caracteres.');
+    if (!form.familia_id) return setError('Selecciona una familia.');
+    setSubmitting(true);
+    try {
+      const created = await Api.createItem({
+        sku: form.sku.trim(),
+        nombre: form.nombre.trim(),
+        familia_id: parseInt(form.familia_id, 10),
+        centro_costo_id: ccBackendId,
+        unidad_medida: form.unidad_medida,
+        criticidad: form.criticidad,
+        especificacion_tecnica: form.especificacion_tecnica.trim() || null,
+      });
+      onCreated({ itemId: created.id, sku: created.sku, nombre: created.nombre });
+    } catch (e) {
+      setError(e?.body?.error?.message || e?.message || 'No se pudo crear el item.');
+    } finally { setSubmitting(false); }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Nuevo item del catálogo</h3>
+          <button className="modal-close" onClick={onCancel}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="modal-body">
+          <Field label="Centro de costo" hint="Asignación automática">
+            <Input value={ccLabel || `CC #${ccBackendId}`} disabled />
+          </Field>
+          <Field label="SKU" required>
+            <Input value={form.sku} placeholder="ITM-..." onChange={(e) => set({ sku: e.target.value })} />
+          </Field>
+          <Field label="Nombre" required>
+            <Input value={form.nombre} onChange={(e) => set({ nombre: e.target.value })} />
+          </Field>
+          <Field label="Familia" required>
+            <Select value={form.familia_id} onChange={(e) => set({ familia_id: e.target.value })}>
+              <option value="">Selecciona…</option>
+              {familias.map((f) => (
+                <option key={f.id} value={f.id}>{'— '.repeat(f.nivel - 1)}{f.nombre}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Unidad de medida">
+            <Select value={form.unidad_medida} onChange={(e) => set({ unidad_medida: e.target.value })}>
+              <option value="UN">UN — Unidad</option>
+              <option value="KG">KG — Kilogramo</option>
+              <option value="LT">LT — Litro</option>
+              <option value="M">M — Metro</option>
+              <option value="M2">M2 — Metro cuadrado</option>
+              <option value="M3">M3 — Metro cúbico</option>
+              <option value="HR">HR — Hora</option>
+              <option value="SVC">SVC — Servicio</option>
+            </Select>
+          </Field>
+          <Field label="Criticidad">
+            <Select value={form.criticidad} onChange={(e) => set({ criticidad: e.target.value })}>
+              <option value="GENERICO">Genérico</option>
+              <option value="ESTANDAR">Estándar</option>
+              <option value="CRITICO">Crítico</option>
+            </Select>
+          </Field>
+          <Field label="Especificación técnica" hint="Opcional">
+            <Textarea
+              rows={3}
+              value={form.especificacion_tecnica}
+              onChange={(e) => set({ especificacion_tecnica: e.target.value })}
+            />
+          </Field>
+          {error && <div className="field-error">{error}</div>}
+        </div>
+        <div className="modal-actions">
+          <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
+          <Button variant="primary" onClick={submit} disabled={submitting}>
+            {submitting ? 'Creando…' : 'Crear item'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Sección: Items (con picker inline contra el catálogo del CC actual).
+const SectionItems = ({ form, set, errors, ccBackendId, ccLabel }) => {
+  const [pickerForRow, setPickerForRow] = React.useState(null); // { rowId, initialName }
+
   const updateItem = (id, patch) => {
     set({ items: form.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) });
   };
   const addItem = () => {
     const nextId = Math.max(0, ...form.items.map((i) => i.id)) + 1;
-    set({ items: [...form.items, { id: nextId, descripcion: '', cantidad: 1, unidad: 'unidad' }] });
+    set({
+      items: [
+        ...form.items,
+        { id: nextId, itemId: null, sku: '', nombre: '', cantidad: 1, especificacion: '' },
+      ],
+    });
   };
   const removeItem = (id) => {
     set({ items: form.items.filter((it) => it.id !== id) });
   };
+
   return (
     <div className="form-section">
       <div className="section-head">
         <div className="section-num">3</div>
         <div>
           <h3 className="section-title">Items solicitados</h3>
-          <p className="section-sub">Agrega cada item con su cantidad. Puedes agregar todos los necesarios.</p>
+          <p className="section-sub">
+            Buscá y selecciona items del catálogo de este CC. Si el item no existe, podés crearlo
+            sobre la marcha — quedará vinculado a este CC.
+          </p>
         </div>
       </div>
       <div className="items-table">
         <div className="items-head">
-          <div>Descripción del item</div>
+          <div>Item del catálogo</div>
           <div>Cantidad</div>
-          <div>Unidad</div>
+          <div>Especificación</div>
           <div></div>
         </div>
-        {form.items.map((it, idx) => (
+        {form.items.map((it) => (
           <div key={it.id} className="items-row">
             <div className="items-cell">
-              <Input
-                placeholder={`Item ${idx + 1} — Ej: Pastillas de freno delanteras`}
-                value={it.descripcion}
-                onChange={(e) => updateItem(it.id, { descripcion: e.target.value })}
+              <ItemPicker
+                row={it}
+                ccBackendId={ccBackendId}
+                onSelect={(patch) => updateItem(it.id, patch)}
+                onCreateNew={(initialName) => setPickerForRow({ rowId: it.id, initialName })}
               />
             </div>
             <div className="items-cell">
               <Input
                 type="number"
-                min="1"
+                min="0.0001"
+                step="any"
                 value={it.cantidad}
                 onChange={(e) => updateItem(it.id, { cantidad: Number(e.target.value) })}
               />
             </div>
             <div className="items-cell">
-              <Select value={it.unidad} onChange={(e) => updateItem(it.id, { unidad: e.target.value })}>
-                <option value="unidad">unidad</option>
-                <option value="caja">caja</option>
-                <option value="litros">litros</option>
-                <option value="kg">kg</option>
-                <option value="metros">metros</option>
-                <option value="servicio">servicio</option>
-                <option value="hora">hora</option>
-                <option value="tambor">tambor</option>
-              </Select>
+              <Input
+                placeholder="Detalle adicional (opcional)"
+                value={it.especificacion}
+                onChange={(e) => updateItem(it.id, { especificacion: e.target.value })}
+              />
             </div>
             <div className="items-cell items-cell-actions">
               {form.items.length > 1 && (
@@ -184,6 +389,19 @@ const SectionItems = ({ form, set, errors }) => {
       <button type="button" className="add-item-btn" onClick={addItem}>
         <Icon name="plus" size={14} /> Agregar otro item
       </button>
+
+      {pickerForRow && (
+        <NuevoItemModal
+          ccBackendId={ccBackendId}
+          ccLabel={ccLabel}
+          initialName={pickerForRow.initialName}
+          onCancel={() => setPickerForRow(null)}
+          onCreated={(patch) => {
+            updateItem(pickerForRow.rowId, patch);
+            setPickerForRow(null);
+          }}
+        />
+      )}
     </div>
   );
 };
@@ -266,7 +484,7 @@ const ResumenLateral = ({ form, empresas, centros }) => {
     if (form.tipo) n++;
     if (form.titulo && form.descripcion) n++;
     if (form.centroCosto) n++;
-    if (form.items.some((i) => i.descripcion)) n++;
+    if (form.items.some((i) => i.itemId)) n++;
     return Math.round((n / total) * 100);
   })();
 
@@ -294,7 +512,7 @@ const ResumenLateral = ({ form, empresas, centros }) => {
         </div>
         <div className="resumen-item">
           <dt>Items</dt>
-          <dd>{form.items.filter((i) => i.descripcion).length || <span className="resumen-empty">—</span>}</dd>
+          <dd>{form.items.filter((i) => i.itemId).length || <span className="resumen-empty">—</span>}</dd>
         </div>
         <div className="resumen-item">
           <dt>Adjuntos</dt>
@@ -318,9 +536,17 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel, empresas: empre
   const [form, setForm] = React.useState({
     empresa: '', tipo: '', titulo: '', descripcion: '', centroCosto: '',
     fechaRequerida: '',
-    items: [{ id: 1, descripcion: '', cantidad: 1, unidad: 'unidad' }],
+    // items: cada uno tiene `itemId` (backend id, asignado por el picker) o
+    // null mientras no se haya seleccionado/creado.
+    items: [{ id: 1, itemId: null, sku: '', nombre: '', cantidad: 1, especificacion: '' }],
     adjuntos: [],
   });
+
+  // Resolución del CC actual a sus datos de backend, para pasar al SectionItems.
+  const ccsDelEmpresa = form.empresa ? (centros[form.empresa] || []) : [];
+  const ccObj = ccsDelEmpresa.find((c) => c.id === form.centroCosto);
+  const ccBackendId = ccObj?.backendId;
+  const ccLabel = ccObj ? `${ccObj.codigo} · ${ccObj.nombre}` : null;
   const [errors, setErrors] = React.useState({});
   const [step, setStep] = React.useState(0);
 
@@ -338,7 +564,10 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel, empresas: empre
     else if (form.fechaRequerida < new Date().toISOString().slice(0, 10)) {
       e.fechaRequerida = 'La fecha no puede ser anterior a hoy';
     }
-    if (!form.items.some((i) => i.descripcion.trim())) e.items = 'Agrega al menos un item con descripción';
+    const itemsValidos = form.items.filter((i) => i.itemId);
+    if (itemsValidos.length === 0) {
+      e.items = 'Agrega al menos un item del catálogo (o creá uno nuevo)';
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -353,7 +582,7 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel, empresas: empre
       <div className="form-container form-single">
         <SectionEmpresa form={form} set={set} errors={errors} empresas={empresas} />
         <SectionDetalle form={form} set={set} errors={errors} centros={centros} />
-        <SectionItems form={form} set={set} errors={errors} />
+        <SectionItems form={form} set={set} errors={errors} ccBackendId={ccBackendId} ccLabel={ccLabel} />
         <SectionAdjuntos form={form} set={set} />
         <div className="form-actions">
           <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
@@ -373,7 +602,7 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel, empresas: empre
         <div className="form-twocol-main">
           <SectionEmpresa form={form} set={set} errors={errors} empresas={empresas} />
           <SectionDetalle form={form} set={set} errors={errors} centros={centros} />
-          <SectionItems form={form} set={set} errors={errors} />
+          <SectionItems form={form} set={set} errors={errors} ccBackendId={ccBackendId} ccLabel={ccLabel} />
           <SectionAdjuntos form={form} set={set} />
           <div className="form-actions">
             <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
@@ -394,7 +623,7 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel, empresas: empre
   const steps = [
     { label: 'Empresa', component: <SectionEmpresa form={form} set={set} errors={errors} empresas={empresas} /> },
     { label: 'Detalle', component: <SectionDetalle form={form} set={set} errors={errors} centros={centros} /> },
-    { label: 'Items', component: <SectionItems form={form} set={set} errors={errors} /> },
+    { label: 'Items', component: <SectionItems form={form} set={set} errors={errors} ccBackendId={ccBackendId} ccLabel={ccLabel} /> },
     { label: 'Respaldos', component: <SectionAdjuntos form={form} set={set} /> },
   ];
 

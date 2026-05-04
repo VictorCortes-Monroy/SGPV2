@@ -98,7 +98,6 @@ SGPV2/
 │   │   ├── solicitudes/            # ★ Núcleo: SC + state machine
 │   │   │   └── state_machine.py    # ← El corazón del proceso
 │   │   ├── adjuntos/               # Documentos de respaldo (Railway volume)
-│   │   ├── gastos/                 # Resumen comprometido vs ejecutado (finanzas)
 │   │   └── auditoria/              # Audit log inmutable
 │   └── main.py                     # FastAPI app + monta /frontend en /
 ├── frontend/                       # SPA del prototipo (HTML + JSX + Babel CDN)
@@ -123,71 +122,50 @@ SGPV2/
 
 > Spec canónica con todas las precondiciones, roles y side-effects: [docs/transiciones_sc.md](docs/transiciones_sc.md).
 
-El ciclo de vida de una SC tiene **21 estados** organizados en 6 fases del PRD. El ruteo de **Fase 1** depende del `monto_estimado` de la SC (RN-MONTO):
+**18 estados** (14 intermedios + 4 terminales) organizados en 6 fases del PRD. La SC es **cualitativa** (sin info económica — los montos viven en el módulo de Cotizaciones del sprint 2):
 
 ```
-DRAFT ─[submit]→ PENDING_AREA_APPROVAL
-                          │
-                   [approve_area]
-                          │
-            ┌─────────────┴─────────────┐
-            │ monto ≤ 1M                │ monto > 1M
-            ↓                           ↓
-            │                    PENDING_BUDGET ─[freeze_budget]→ BUDGET_FROZEN
-            │                           │                              │
-            │                   [release_budget]                [authorize_frozen]
-            │                           │                              │
-            │             ┌─────────────┴─────────────┐                │
-            │             │ monto ≤ 5M                │ monto > 5M     │
-            │             ↓                           ↓                │
-            │             │                  PENDING_MANAGEMENT_APPROVAL
-            │             │                           │
-            │             │                  [approve_management]
-            │             │                           │
-            └────────────►└──────────────────────────►┘
-                                       │
-                                       ↓
-                              PENDING_QUOTATION ◄────────────────┐
-                                       │                         │
-                              [register_quotations]              │ [request_recotization]
-                                       ↓                         │ (RN8: máx 2)
-                              QUOTATION_RECEIVED                 │
-                                       │                         │
-                              [send_valorization]                │
-                                       ↓                         │
-                              PENDING_VALORIZATION ──────────────┘
-                                       │
-                              [approve_valorization]
-                                       ↓
-                              VALORIZATION_APPROVED
-                                       │
-                              [emit_po]  ← RN-MONTO-5: re-valida matriz vs cotizado
-                                       ↓
-                              PENDING_PO_APPROVAL ─[reject_po]→ REJECTED
-                                       │
-                              [approve_po]
-                                       ↓
-                              PO_APPROVED ─[send_po_to_supplier]→ PO_SENT_TO_SUPPLIER
-                                       │
-                              [register_reception_conform]
-                                       ↓
-                              PENDING_RECEPTION ─[non_conform]→ NON_CONFORMING
-                                       │
-                              [register_reception_conform]
-                                       ↓
-                              RECEPTION_CONFORM
-                                       │
-                              [receive_invoice]
-                                       ↓
-                              PENDING_INVOICE
-                                       │
-                              [match_invoice_ok]
-                                       ↓
-                              INVOICE_MATCHED
-                                       │
-                              [close]
-                                       ↓
-                                    CLOSED ✓
+DRAFT ─[submit]→ PENDING_AREA_APPROVAL ─[approve_area]→ PENDING_QUOTATION ◄────┐
+                          │                                       │            │
+                  [reject_area]                            [register_quotations]│
+                          ↓                                       ↓            │
+                     REJECTED                          QUOTATION_RECEIVED      │
+                                                                  │            │
+                                                          [send_valorization]  │
+                                                                  ↓            │
+                                                      PENDING_VALORIZATION ────┘
+                                                                  │ [request_recotization] (RN8 máx 2)
+                                                          [approve_valorization]
+                                                                  ↓
+                                                      VALORIZATION_APPROVED
+                                                                  │
+                                                              [emit_po]
+                                                                  ↓
+                                                      PENDING_PO_APPROVAL ─[reject_po]→ REJECTED
+                                                                  │
+                                                          [approve_po]
+                                                                  ↓
+                                                      PO_APPROVED ─[send_po_to_supplier]→ PO_SENT_TO_SUPPLIER
+                                                                  │
+                                                  [register_reception_conform]
+                                                                  ↓
+                                                      PENDING_RECEPTION ─[non_conform]→ NON_CONFORMING
+                                                                  │
+                                                  [register_reception_conform]
+                                                                  ↓
+                                                      RECEPTION_CONFORM
+                                                                  │
+                                                          [receive_invoice]
+                                                                  ↓
+                                                      PENDING_INVOICE
+                                                                  │
+                                                       [match_invoice_ok]
+                                                                  ↓
+                                                      INVOICE_MATCHED
+                                                                  │
+                                                              [close]
+                                                                  ↓
+                                                              CLOSED ✓
 ```
 
 El módulo `state_machine.py` define:
@@ -201,14 +179,15 @@ El módulo `state_machine.py` define:
 **Reglas de negocio implementadas:**
 - **RN5 (Auditoría inmutable):** trigger PL/pgSQL en migración bloquea UPDATE/DELETE en `audit_log`
 - **RN8 (Recotización máxima):** 2 ciclos antes de exigir aprobación gerencial extra
-- **RN-MONTO (Matriz de aprobación por monto):** ≤ 1M jefe_area; > 1M agrega finanzas; > 5M agrega gerencia (estado temprano `PENDING_MANAGEMENT_APPROVAL`). Ver detalles en [docs/transiciones_sc.md](docs/transiciones_sc.md#rn-monto--matriz-de-aprobación-por-monto-).
 - **RN-COMMENT:** todas las acciones de rechazo y `REGISTER_RECEPTION_NON_CONFORM` exigen `comment` no vacío.
 - **RN-SCOPE:** el rol del actor debe estar vinculado a la empresa de la SC (o ser global) en `usuarios_roles`.
-- **RN-DAT-4:** el solicitante no ingresa `monto_estimado`; se calcula desde las líneas.
+- **RN-CAT-CC:** cada item del catálogo pertenece a un único CC; las líneas de la SC solo pueden referenciar items del mismo CC. SKU `UNIQUE(sku, centro_costo_id)`.
 - **RN-SLA / current_assignee_role (denormalizados):** cada SC expone "esperando a quién" y "deadline esperado" sin queries adicionales, recalculados en cada transición.
-- **RN-ADJ:** adjuntos por SC con storage configurable (Railway volume hoy, Azure Blob a futuro). Validación de tamaño y MIME, soft-delete con audit, bloqueado en estados terminales.
+- **RN-ADJ:** adjuntos por SC con storage configurable (Railway volume hoy, Azure Blob a futuro).
 
-**Reglas pendientes:** ver [docs/notificaciones_pendiente.md](docs/notificaciones_pendiente.md) (RN-NOTIF), módulo Cotizaciones (RN-COT-1, RN-VAL-1, RN-MONTO-5).
+**Sin info económica (decisión MVP):** la SC es cualitativa. Sin `monto_estimado`, `precio_referencia`, ni matriz de aprobación por monto. Los montos viven en el módulo de Cotizaciones (sprint 2).
+
+**Reglas pendientes:** ver [docs/notificaciones_pendiente.md](docs/notificaciones_pendiente.md) (RN-NOTIF), módulo Cotizaciones (RN-COT-1, RN-VAL-1).
 
 ---
 
@@ -225,7 +204,7 @@ Todos los endpoints están bajo `/api/v1` y requieren header `X-User-Id` (modo m
 
 ### Catálogo maestro
 - `GET /catalogo/familias` — taxonomía jerárquica
-- `GET /catalogo/items/search?q=<query>` — búsqueda predictiva (SKU o nombre)
+- `GET /catalogo/items/search?q=<query>&centro_costo_id=<cc>` — búsqueda predictiva (SKU o nombre); el filtro por CC es recomendado para que solo aparezcan items del CC de la SC (RN-CAT-CC)
 - `GET /catalogo/items/{id}` — detalle del SKU
 - `POST /catalogo/items` — crear SKU (requiere rol admin/abastecimiento)
 
@@ -237,9 +216,6 @@ Todos los endpoints están bajo `/api/v1` y requieren header `X-User-Id` (modo m
 
 ### Auditoría
 - `GET /auditoria/` — log inmutable filtrable por entity, actor, etc.
-
-### Gastos (solo finanzas / admin)
-- `GET /gastos/resumen?empresa_id=X&periodo_desde=Y&periodo_hasta=Z` — comprometido vs ejecutado agregado por CC. Solo medición, no bloquea el workflow.
 
 ### Adjuntos
 - `POST /solicitudes/{id}/adjuntos` (multipart) — sube documento de respaldo (PDF, imágenes, Office, txt/csv)

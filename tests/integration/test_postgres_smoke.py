@@ -13,7 +13,6 @@ y seed aplicados. Si no, la suite se salta automáticamente (ver
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
 
 import pytest
 from sqlalchemy import select, text
@@ -47,7 +46,6 @@ async def test_sc_status_enum_se_persiste_correctamente(pg_session: AsyncSession
         tipo=TipoCompra.BIEN,
         urgencia=Urgencia.NORMAL,
         descripcion="Smoke: SCStatus → .value",
-        monto_estimado=Decimal("1000"),
         fecha_requerida=date(2026, 12, 31),
     )
     pg_session.add(sc)
@@ -64,8 +62,8 @@ async def test_sc_status_enum_se_persiste_correctamente(pg_session: AsyncSession
     "target_status",
     [
         SCStatus.PENDING_AREA_APPROVAL,
-        SCStatus.PENDING_BUDGET,
-        SCStatus.PENDING_MANAGEMENT_APPROVAL,  # nuevo estado RN-MONTO-2
+        SCStatus.PENDING_QUOTATION,
+        SCStatus.PENDING_VALORIZATION,
         SCStatus.CLOSED,
     ],
 )
@@ -80,7 +78,6 @@ async def test_sc_status_update_persiste(pg_session: AsyncSession, target_status
         tipo=TipoCompra.BIEN,
         urgencia=Urgencia.NORMAL,
         descripcion="Smoke transition",
-        monto_estimado=Decimal("1000"),
         fecha_requerida=date(2026, 12, 31),
     )
     pg_session.add(sc)

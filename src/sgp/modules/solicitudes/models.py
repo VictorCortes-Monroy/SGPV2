@@ -51,7 +51,6 @@ class SolicitudCompra(Base, TimestampMixin):
     )
     descripcion: Mapped[str] = mapped_column(Text, nullable=False)
     justificacion: Mapped[str | None] = mapped_column(Text, nullable=True)
-    monto_estimado: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     fecha_requerida: Mapped[date] = mapped_column(Date, nullable=False)
 
     # Estado del workflow.
@@ -97,7 +96,6 @@ class SolicitudCompra(Base, TimestampMixin):
             "id": self.id,
             "numero": self.numero,
             "status": self.status.value if self.status else None,
-            "monto_estimado": str(self.monto_estimado) if self.monto_estimado else None,
             "recotization_cycles": self.recotization_cycles,
             "centro_costo_id": self.centro_costo_id,
             "tipo": self.tipo.value if self.tipo else None,

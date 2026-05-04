@@ -7,7 +7,6 @@ Responsable de:
 """
 
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,11 +33,6 @@ REQUIRED_ROLES_BY_ACTION: dict[SCAction, set[str]] = {
     SCAction.SUBMIT: {"solicitante"},
     SCAction.APPROVE_AREA: {"jefe_area"},
     SCAction.REJECT_AREA: {"jefe_area"},
-    SCAction.RELEASE_BUDGET: {"finanzas"},
-    SCAction.FREEZE_BUDGET: {"finanzas"},
-    SCAction.AUTHORIZE_FROZEN: {"gerencia", "finanzas"},
-    SCAction.APPROVE_MANAGEMENT: {"gerencia"},
-    SCAction.REJECT_MANAGEMENT: {"gerencia"},
     SCAction.REGISTER_QUOTATIONS: {"abastecimiento"},
     SCAction.SEND_VALORIZATION: {"abastecimiento"},
     SCAction.APPROVE_VALORIZATION: {"jefe_area"},
@@ -63,7 +57,6 @@ ACTIONS_REQUIRING_COMMENT: set[SCAction] = {
     SCAction.REJECT_AREA,
     SCAction.REJECT_VALORIZATION,
     SCAction.REJECT_PO,
-    SCAction.REJECT_MANAGEMENT,
     SCAction.REGISTER_RECEPTION_NON_CONFORM,
 }
 
@@ -84,12 +77,11 @@ class SolicitudCompraService:
     ) -> SolicitudCompra:
         """Crea una SC nueva en estado DRAFT.
 
-        El `monto_estimado` se calcula automáticamente como
-        Σ(cantidad × precio_referencia) de las líneas; las líneas con
-        item sin precio_referencia contribuyen 0.
+        Valida que cada item de las líneas pertenezca al mismo CC de la SC
+        (RN-CAT-CC: catálogo está particionado por centro de costo).
         """
+        await self._validar_items_pertenecen_al_cc(payload)
         numero = await self.repo.generate_next_numero()
-        monto_estimado = await self._calcular_monto_estimado(payload)
 
         sc = SolicitudCompra(
             numero=numero,
@@ -100,7 +92,6 @@ class SolicitudCompraService:
             urgencia=payload.urgencia,
             descripcion=payload.descripcion,
             justificacion=payload.justificacion,
-            monto_estimado=monto_estimado,
             fecha_requerida=payload.fecha_requerida,
             status=SCStatus.DRAFT,
             recotization_cycles=0,
@@ -122,31 +113,35 @@ class SolicitudCompraService:
             action="CREATE",
             actor_id=solicitante.id,
             after=sc.snapshot(),
-            comment=(
-                f"SC creada con {len(payload.lineas)} línea(s); "
-                f"monto_estimado calculado = {monto_estimado}"
-            ),
+            comment=f"SC creada con {len(payload.lineas)} línea(s)",
         )
         return sc
 
-    async def _calcular_monto_estimado(self, payload: SolicitudCompraCreate) -> Decimal:
-        """Σ(cantidad × precio_referencia) sobre todas las líneas.
-
-        Los items sin precio_referencia contribuyen 0. La cotización posterior
-        determinará el monto real (RN-MONTO-5: re-validación pre-EMIT_PO).
-        """
-        item_ids = [l.item_id for l in payload.lineas]
+    async def _validar_items_pertenecen_al_cc(self, payload: SolicitudCompraCreate) -> None:
+        """RN-CAT-CC: cada item del catálogo pertenece a un único CC. Las líneas
+        de la SC solo pueden referenciar items cuyo `centro_costo_id` coincida
+        con el de la SC."""
+        item_ids = list({l.item_id for l in payload.lineas})
         result = await self.db.execute(
             select(CatalogoItem).where(CatalogoItem.id.in_(item_ids))
         )
-        precios_by_id = {
-            i.id: (i.precio_referencia or Decimal(0)) for i in result.scalars().all()
-        }
-        total = Decimal(0)
-        for linea in payload.lineas:
-            precio = precios_by_id.get(linea.item_id, Decimal(0))
-            total += Decimal(linea.cantidad) * precio
-        return total
+        items_by_id = {i.id: i for i in result.scalars().all()}
+
+        faltantes = [iid for iid in item_ids if iid not in items_by_id]
+        if faltantes:
+            raise BusinessRuleViolation(
+                f"Items no encontrados en el catálogo: {faltantes}"
+            )
+
+        otro_cc = [
+            i.sku for i in items_by_id.values()
+            if i.centro_costo_id != payload.centro_costo_id
+        ]
+        if otro_cc:
+            raise BusinessRuleViolation(
+                f"Estos items pertenecen a otro centro de costo: {otro_cc}. "
+                f"Crear nuevos items en el CC {payload.centro_costo_id} si los necesitas."
+            )
 
     @staticmethod
     def _sync_assignee_and_sla(sc: SolicitudCompra) -> None:
@@ -183,13 +178,8 @@ class SolicitudCompraService:
         await self._authorize_action(sc, request.action, actor)
         before = sc.snapshot()
 
-        # Aplicar transición de estado (valida automáticamente).
-        # `monto_estimado` se pasa para soportar ruteo condicional (RN-MONTO).
-        new_status = apply_action(
-            sc.status,
-            request.action,
-            monto_estimado=sc.monto_estimado,
-        )
+        # Aplicar transición de estado (valida automáticamente)
+        new_status = apply_action(sc.status, request.action)
 
         # Reglas de negocio específicas por acción
         self._apply_business_rules(sc, request.action, actor)

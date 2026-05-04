@@ -69,7 +69,12 @@ const Api = {
   empresas:      () => request('GET', '/api/v1/empresas'),
   centrosCosto:  (empresaId) => request('GET', `/api/v1/empresas/${empresaId}/centros-costo`),
   familias:      () => request('GET', '/api/v1/catalogo/familias'),
-  searchItems:   (q, limit = 20) => request('GET', '/api/v1/catalogo/items/search', { query: { q, limit } }),
+  // RN-CAT-CC: el catálogo está particionado por CC. Pasar `centro_costo_id`
+  // para que solo aparezcan items del CC de la SC.
+  searchItems:   (q, centro_costo_id = null, limit = 20) =>
+    request('GET', '/api/v1/catalogo/items/search', {
+      query: { q, centro_costo_id, limit },
+    }),
   getItem:       (id) => request('GET', `/api/v1/catalogo/items/${id}`),
   createItem:    (payload) => request('POST', '/api/v1/catalogo/items', { body: payload }),
 
@@ -98,18 +103,13 @@ const Api = {
   deleteAdjunto:   (scId, adjId) => request('DELETE', `/api/v1/solicitudes/${scId}/adjuntos/${adjId}`),
   downloadAdjuntoUrl: (scId, adjId) => `${ApiClient.baseUrl}/api/v1/solicitudes/${scId}/adjuntos/${adjId}/download`,
 
-  // Gastos
-  resumenGastos: (empresa_id, periodo_desde, periodo_hasta) =>
-    request('GET', '/api/v1/gastos/resumen', { query: { empresa_id, periodo_desde, periodo_hasta } }),
-
   // Auditoría
   auditLogs: (filters = {}) => request('GET', '/api/v1/auditoria/', { query: filters }),
 };
 
 // ── ENUMS DEL BACKEND ────────────────────────────────────────────────
 const BACKEND_STATUS = [
-  'draft', 'pending_area_approval', 'pending_budget', 'budget_frozen',
-  'pending_management_approval', 'pending_quotation', 'quotation_received',
+  'draft', 'pending_area_approval', 'pending_quotation', 'quotation_received',
   'pending_valorization', 'valorization_approved', 'pending_po_emission',
   'pending_po_approval', 'po_approved', 'po_sent_to_supplier',
   'pending_reception', 'reception_conform', 'pending_invoice',
@@ -119,9 +119,6 @@ const BACKEND_STATUS = [
 const STATUS_LABELS = {
   draft: 'Borrador',
   pending_area_approval: 'Pendiente aprobación del área',
-  pending_budget: 'Pendiente presupuesto',
-  budget_frozen: 'Presupuesto congelado',
-  pending_management_approval: 'Pendiente aprobación gerencia',
   pending_quotation: 'Pendiente cotización',
   quotation_received: 'Cotización recibida',
   pending_valorization: 'Pendiente valorización',
@@ -144,9 +141,6 @@ const STATUS_LABELS = {
 const STATUS_TO_PHASE = {
   draft: 'borrador',
   pending_area_approval: 'revision',
-  pending_budget: 'revision',
-  budget_frozen: 'revision',
-  pending_management_approval: 'revision',
   pending_quotation: 'aprobada',
   quotation_received: 'cotizada',
   pending_valorization: 'cotizada',
@@ -169,11 +163,6 @@ const ACTION_LABELS = {
   submit: 'Enviar a aprobación',
   approve_area: 'Aprobar (jefe de área)',
   reject_area: 'Rechazar',
-  release_budget: 'Liberar presupuesto',
-  freeze_budget: 'Congelar presupuesto',
-  authorize_frozen: 'Autorizar congelamiento',
-  approve_management: 'Aprobar (gerencia)',
-  reject_management: 'Rechazar (gerencia)',
   register_quotations: 'Registrar cotizaciones',
   send_valorization: 'Enviar a valorización',
   approve_valorization: 'Aprobar valorización',
@@ -220,12 +209,11 @@ const adaptSolicitud = (sc, empresasMap, ccMap) => {
     centroCosto: cc ? `cc-${cc.id}` : `cc-${sc.centro_costo_id}`,
     centroCostoId: sc.centro_costo_id,
     centroCostoInfo: cc,
-    // tipo / urgencia / monto / fechas
+    // tipo / urgencia / fechas (sin info económica — fuera de alcance MVP)
     tipo: sc.tipo === 'BIEN' ? 'insumos' : 'servicios',
     tipoBackend: sc.tipo,
     urgencia,
     urgenciaBackend: sc.urgencia,
-    montoEstimado: parseFloat(sc.monto_estimado) || 0,
     fechaSolicitud: sc.created_at?.slice(0, 10),
     fechaRequerida: sc.fecha_requerida,
     // workflow / phase

@@ -1,7 +1,5 @@
 """Schemas Pydantic para el catálogo maestro."""
 
-from decimal import Decimal
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from sgp.modules.catalogo.models import Criticidad, UnidadMedida
@@ -20,10 +18,10 @@ class FamiliaRead(BaseModel):
 class CatalogoItemBase(BaseModel):
     sku: str = Field(..., min_length=3, max_length=100)
     nombre: str = Field(..., min_length=3, max_length=255)
-    familia_id: int
+    familia_id: int = Field(..., gt=0)
+    centro_costo_id: int = Field(..., gt=0)
     unidad_medida: UnidadMedida
     especificacion_tecnica: str | None = None
-    precio_referencia: Decimal | None = Field(None, ge=0)
     criticidad: Criticidad = Criticidad.ESTANDAR
 
 
@@ -40,7 +38,7 @@ class CatalogoItemRead(CatalogoItemBase):
 
 
 class CatalogoItemSearch(BaseModel):
-    """Resultado de búsqueda predictiva (Sec 8.1 del PRD)."""
+    """Resultado de búsqueda predictiva (filtrada por CC)."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,4 +46,5 @@ class CatalogoItemSearch(BaseModel):
     sku: str
     nombre: str
     familia_nombre: str
+    centro_costo_id: int
     unidad_medida: UnidadMedida

@@ -19,10 +19,21 @@ class CatalogoRepository:
         )
         return result.scalar_one_or_none()
 
-    async def search_items(self, query: str, limit: int = 20) -> list[CatalogoItem]:
-        """Búsqueda predictiva por SKU o nombre."""
+    async def search_items(
+        self,
+        query: str,
+        *,
+        centro_costo_id: int | None = None,
+        limit: int = 20,
+    ) -> list[CatalogoItem]:
+        """Búsqueda predictiva por SKU o nombre.
+
+        Si `centro_costo_id` se provee, filtra solo items vinculados a ese CC.
+        Es el caso típico desde el form de SC: solo se muestran items del CC
+        de la solicitud (RN-CAT-CC).
+        """
         like = f"%{query}%"
-        result = await self.db.execute(
+        stmt = (
             select(CatalogoItem)
             .where(
                 CatalogoItem.activo,
@@ -32,6 +43,9 @@ class CatalogoRepository:
             .order_by(CatalogoItem.nombre)
             .limit(limit)
         )
+        if centro_costo_id is not None:
+            stmt = stmt.where(CatalogoItem.centro_costo_id == centro_costo_id)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def list_familias(self) -> list[Familia]:

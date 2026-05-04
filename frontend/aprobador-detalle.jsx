@@ -58,7 +58,7 @@ const ApprovalActionModal = ({ tipo, solicitud, onClose, onConfirm }) => {
             <div className="modal-summary-meta">
               <span>{solicitud.solicitante.nombre}</span>
               <span className="meta-dot" />
-              <span>{formatCLP(solicitud.montoEstimado)}</span>
+              <span>{solicitud.items.length} item{solicitud.items.length !== 1 ? 's' : ''}</span>
             </div>
           </div>
           <Field label={c.label}>
@@ -135,8 +135,6 @@ const AprobadorDetalle = ({ solicitud, onBack, onAction, readonly }) => {
   const tipo = TIPOS_COMPRA.find((t) => t.id === solicitud.tipo);
   const [modal, setModal] = React.useState(null);
 
-  const total = solicitud.items.reduce((s, it) => s + (it.precioUnit || 0) * it.cantidad, 0);
-
   return (
     <div className="tracking">
       <button className="back-link" onClick={onBack}>
@@ -162,10 +160,7 @@ const AprobadorDetalle = ({ solicitud, onBack, onAction, readonly }) => {
           </div>
         </div>
         <div className="aprob-hero-right">
-          <div className="aprob-monto-block">
-            <div className="aprob-monto-label">Monto estimado</div>
-            <div className="aprob-monto-value">{formatCLP(solicitud.montoEstimado)}</div>
-          </div>
+          <UrgenciaBadge urgencia={solicitud.urgencia} />
         </div>
       </div>
 
@@ -205,22 +200,17 @@ const AprobadorDetalle = ({ solicitud, onBack, onAction, readonly }) => {
             <div className="card-head"><h3>Items solicitados</h3><span className="card-head-count">{solicitud.items.length}</span></div>
             <table className="items-detail">
               <thead>
-                <tr><th>Descripción</th><th>Cant.</th><th>Unidad</th><th>P. unit.</th><th>Total</th></tr>
+                <tr><th>SKU</th><th>Descripción</th><th>Cant.</th></tr>
               </thead>
               <tbody>
                 {solicitud.items.map((it) => (
                   <tr key={it.id}>
+                    <td><code>{it.sku || '—'}</code></td>
                     <td>{it.descripcion}</td>
                     <td className="num">{it.cantidad}</td>
-                    <td>{it.unidad}</td>
-                    <td className="num">{it.precioUnit ? formatCLP(it.precioUnit) : '—'}</td>
-                    <td className="num"><strong>{it.precioUnit ? formatCLP(it.precioUnit * it.cantidad) : '—'}</strong></td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr><td colSpan="4" className="num">Total estimado</td><td className="num"><strong>{formatCLP(total || solicitud.montoEstimado)}</strong></td></tr>
-              </tfoot>
             </table>
           </Card>
 
@@ -283,8 +273,6 @@ const AprobadorDetalle = ({ solicitud, onBack, onAction, readonly }) => {
         </div>
 
         <div className="tracking-side">
-          <PresupuestoCC empresa={solicitud.empresa} centroCosto={solicitud.centroCosto} montoSolicitado={solicitud.montoEstimado} />
-
           <Card>
             <div className="card-head"><h3>Resumen rápido</h3></div>
             <dl className="resumen-list">
