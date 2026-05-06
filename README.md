@@ -1,12 +1,30 @@
 # SGP — Sistema de Gestión de Compras
 
-API del Sistema de Gestión de Compras (SGP). Stack: **FastAPI + SQLAlchemy 2.0 async + PostgreSQL + Alembic**.
+API + Frontend del Sistema de Gestión de Compras (SGP). Stack: **FastAPI + SQLAlchemy 2.0 async + PostgreSQL + Alembic**, frontend React + JSX (CDN, sin build) servido en `/`.
 
-> Implementación basada en el diseño técnico v2.0 (`docs/SGP_DISENO_TECNICO_v2.md`) y el PRD v2.0.
+**Producción:** https://sgpv2-production.up.railway.app
 
 ---
 
-## Tabla de contenidos
+## Documentación
+
+Para temas específicos, ir directo a la doc correspondiente. El README es un quick-start.
+
+| Doc | Para qué |
+|---|---|
+| [docs/arquitectura.md](docs/arquitectura.md) | Vista de pájaro: módulos, capas, datos, migraciones, tests |
+| [docs/transiciones_sc.md](docs/transiciones_sc.md) | Spec canónica del workflow: cada acción con roles, precondiciones, side-effects |
+| [docs/decisiones.md](docs/decisiones.md) | ADRs — el **por qué** detrás de cada decisión grande |
+| [docs/roadmap.md](docs/roadmap.md) | Estado actual + qué falta para MVP completo + próximos sprints |
+| [docs/deploy.md](docs/deploy.md) | Playbook de deploy local y Railway, troubleshooting |
+| [docs/frontend.md](docs/frontend.md) | Arquitectura del prototipo, item picker, path a Next.js |
+| [docs/notificaciones_pendiente.md](docs/notificaciones_pendiente.md) | Spec funcional + diseño técnico de notificaciones (sprint 7) |
+| [SGP_DISENO_TECNICO_v2.md](SGP_DISENO_TECNICO_v2.md) | Diseño técnico v2.0 original (referencia histórica) |
+| [PRD_Sistema_Gestion_Compras_v2_0.docx](PRD_Sistema_Gestion_Compras_v2_0.docx) | Producto |
+
+---
+
+## Tabla de contenidos (este README)
 
 - [Quick start](#quick-start)
 - [Stack y arquitectura](#stack-y-arquitectura)
@@ -18,7 +36,6 @@ API del Sistema de Gestión de Compras (SGP). Stack: **FastAPI + SQLAlchemy 2.0 
 - [Demo end-to-end con curl](#demo-end-to-end-con-curl)
 - [Testing](#testing)
 - [Despliegue en Railway](#despliegue-en-railway)
-- [Próximos pasos](#próximos-pasos)
 
 ---
 
@@ -460,22 +477,17 @@ Una vez verificado, en **Variables** poner `SEED_ON_STARTUP=false` (o eliminar l
 
 ## Próximos pasos
 
-El scaffolding entrega los **3 primeros estados del proceso** (Fase 1, 2, 3 del PRD parcialmente). Lo que falta para llegar al MVP completo:
+Roadmap detallado en [docs/roadmap.md](docs/roadmap.md). Resumen:
 
-| Sprint | Entregable |
-|---|---|
-| 2 | **Módulo Cotizaciones:** RFQ, registro de cotizaciones, comparativo automático, marcado de ganadora |
-| 3 | **Valorización:** generación automática + decisión 3-vías (aprobar / recotizar / rechazar) |
-| 4 | **Módulo Órdenes de Compra:** emisión vinculada a SC + cotización ganadora, matriz dual de aprobación |
-| 5 | **Módulo Recepción:** bienes (Bodega) y servicios (Solicitante), gate bloqueante para factura |
-| 6 | **Frontend Next.js:** dashboard, formularios de SC, aprobaciones móviles, audit log explorable |
-
-Después del MVP:
-- Integración real con Softland (sync OC + CxP)
-- Integración con SII (DTE + ventana 8 días + matching 3-way)
-- Migración del header `X-User-Id` a Clerk JWT
-- Notificaciones por email (Resend) y SMS
-- Reportes y dashboard de gasto
+| Sprint | Entregable | Bloquea |
+|---|---|---|
+| 2 ★ | Módulo Cotizaciones (RFQ, comparativo, ganadora) | RN-COT-1, RN-VAL-1, montos reales |
+| 3 | Valorización con datos reales | — |
+| 4 | Módulo Órdenes de Compra | Integración Softland |
+| 5 | Módulo Recepción | Gate factura |
+| 6 | Matching 3-vías + integración SII | — |
+| 7 | Notificaciones email (Resend) | — |
+| Post-MVP | Auth real Clerk, frontend Next.js, storage Azure Blob | — |
 
 ---
 
