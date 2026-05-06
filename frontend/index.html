@@ -299,27 +299,48 @@
 
     /* === Item picker === */
     .item-picker { position: relative; }
+    .item-picker-input { position: relative; }
+    .item-picker-input .input { padding-left: 32px; }
+    .item-picker-input-icon {
+      position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      color: var(--text-faint); pointer-events: none;
+    }
     .item-picker-dropdown {
-      position: absolute; top: 100%; left: 0; right: 0; z-index: 50;
-      background: #fff; border: 1px solid var(--border); border-radius: 8px;
-      margin-top: 4px; max-height: 280px; overflow-y: auto;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+      position: absolute; top: calc(100% + 4px); left: 0;
+      z-index: 60;
+      min-width: 100%; width: max-content; max-width: min(520px, 90vw);
+      background: #fff; border: 1px solid var(--border); border-radius: 10px;
+      max-height: 320px; overflow-y: auto;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16), 0 0 0 1px rgba(15, 23, 42, 0.04);
+      animation: pickerIn 0.12s ease-out;
     }
-    .item-picker-empty { padding: 10px 12px; color: var(--text-faint); font-size: 13px; }
+    @keyframes pickerIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+    .item-picker-empty { padding: 14px 14px; color: var(--text-faint); font-size: 13px; text-align: center; }
     .item-picker-option {
-      display: flex; align-items: center; gap: 8px; width: 100%;
-      padding: 8px 12px; background: transparent; border: 0; text-align: left;
-      cursor: pointer; font-size: 13px;
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      padding: 10px 14px; background: transparent; border: 0; border-bottom: 1px solid var(--bg-subtle);
+      text-align: left; cursor: pointer; font-size: 13px;
     }
-    .item-picker-option:hover { background: var(--bg-subtle); }
-    .item-picker-sku { font-family: 'JetBrains Mono', monospace; font-weight: 500; color: var(--text); }
-    .item-picker-nombre { color: var(--text-muted); flex: 1; }
-    .item-picker-fam { font-size: 11px; color: var(--text-faint); }
+    .item-picker-option:last-of-type { border-bottom: 0; }
+    .item-picker-option:hover, .item-picker-option:focus-visible {
+      background: var(--accent-emerald-soft); outline: none;
+    }
+    .item-picker-sku {
+      font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 12px;
+      color: var(--text); padding: 2px 6px; border-radius: 4px;
+      background: var(--bg-subtle); flex-shrink: 0;
+    }
+    .item-picker-nombre { color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item-picker-fam {
+      font-size: 11px; color: var(--text-faint); flex-shrink: 0;
+      padding: 2px 8px; background: var(--bg-subtle); border-radius: 999px;
+    }
     .item-picker-create {
-      display: flex; align-items: center; gap: 6px; width: 100%;
-      padding: 10px 12px; background: var(--accent-emerald-soft); color: var(--accent-emerald);
+      display: flex; align-items: center; gap: 8px; width: 100%;
+      padding: 12px 14px; background: var(--accent-emerald-soft); color: var(--accent-emerald);
       border: 0; border-top: 1px solid var(--border); cursor: pointer;
-      font-size: 13px; font-weight: 500;
+      font-size: 13px; font-weight: 600;
+      position: sticky; bottom: 0;
     }
     .item-picker-create:hover { background: #d1fae5; }
 

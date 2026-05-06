@@ -536,7 +536,10 @@ input, textarea, select { font-family: inherit; }
 .tipo-chip-desc { font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
 
 /* Items */
-.items-table { display: flex; flex-direction: column; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+/* overflow:visible — antes era hidden, lo cual recortaba el dropdown del item-picker. */
+.items-table { display: flex; flex-direction: column; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: visible; }
+.items-table > :first-child { border-top-left-radius: calc(var(--radius) - 1px); border-top-right-radius: calc(var(--radius) - 1px); }
+.items-table > :last-child { border-bottom-left-radius: calc(var(--radius) - 1px); border-bottom-right-radius: calc(var(--radius) - 1px); }
 .items-head, .items-row {
   display: grid;
   grid-template-columns: 1fr 100px 130px 40px;

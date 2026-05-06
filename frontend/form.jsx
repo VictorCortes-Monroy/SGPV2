@@ -177,25 +177,36 @@ const ItemPicker = ({ row, ccBackendId, onSelect, onCreateNew }) => {
     }, 250);
   };
 
+  const tieneQuery = q.trim().length >= 2;
+  const sinResultados = tieneQuery && !loading && results.length === 0;
+
   return (
     <div className="item-picker" onBlur={(e) => {
       // Cerrar el dropdown cuando el foco sale del componente entero
       if (!e.currentTarget.contains(e.relatedTarget)) setTimeout(() => setOpen(false), 150);
     }}>
-      <Input
-        placeholder={ccBackendId ? '🔍 Buscar item del CC...' : 'Selecciona empresa y CC primero'}
-        value={q}
-        disabled={!ccBackendId}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => { setQ(e.target.value); search(e.target.value); setOpen(true); }}
-      />
-      {open && ccBackendId && (q.length >= 2 || results.length > 0) && (
+      <div className="item-picker-input">
+        <Icon name="search" size={14} className="item-picker-input-icon" />
+        <Input
+          placeholder={ccBackendId ? 'Buscar por SKU o nombre…' : 'Selecciona empresa y CC primero'}
+          value={q}
+          disabled={!ccBackendId}
+          onFocus={() => setOpen(true)}
+          onChange={(e) => { setQ(e.target.value); search(e.target.value); setOpen(true); }}
+        />
+      </div>
+      {open && ccBackendId && (
         <div className="item-picker-dropdown">
-          {loading && <div className="item-picker-empty">Buscando…</div>}
-          {!loading && results.length === 0 && (
-            <div className="item-picker-empty">No hay items que matcheen.</div>
+          {!tieneQuery && (
+            <div className="item-picker-empty">Escribí al menos 2 caracteres para buscar en el catálogo del CC.</div>
           )}
-          {results.map((it) => (
+          {tieneQuery && loading && (
+            <div className="item-picker-empty">Buscando…</div>
+          )}
+          {sinResultados && (
+            <div className="item-picker-empty">No hay items que coincidan con “{q}”.</div>
+          )}
+          {!loading && results.map((it) => (
             <button
               key={it.id}
               type="button"
@@ -207,18 +218,20 @@ const ItemPicker = ({ row, ccBackendId, onSelect, onCreateNew }) => {
               }}
             >
               <span className="item-picker-sku">{it.sku}</span>
-              <span className="item-picker-nombre">— {it.nombre}</span>
-              <span className="item-picker-fam">{it.familia_nombre}</span>
+              <span className="item-picker-nombre">{it.nombre}</span>
+              {it.familia_nombre && <span className="item-picker-fam">{it.familia_nombre}</span>}
             </button>
           ))}
-          <button
-            type="button"
-            className="item-picker-create"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => { onCreateNew(q); setOpen(false); }}
-          >
-            <Icon name="plus" size={12} /> Crear nuevo item en este CC
-          </button>
+          {tieneQuery && (
+            <button
+              type="button"
+              className="item-picker-create"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onCreateNew(q); setOpen(false); }}
+            >
+              <Icon name="plus" size={14} /> Crear “{q}” como item nuevo en este CC
+            </button>
+          )}
         </div>
       )}
     </div>
