@@ -154,7 +154,7 @@ const useDataSource = ({ source, userId, baseUrl }) => {
           empresa_id: empresaObj.backendId,
           centro_costo_id: ccObj.backendId,
           tipo: form.tipo === 'servicios' ? 'SERVICIO' : 'BIEN',
-          urgencia: URGENCIA_FRONTEND[form.urgencia] || 'NORMAL',
+          urgencia: form.urgenciaBackend || URGENCIA_FRONTEND[form.urgencia] || 'NORMAL',
           descripcion: form.descripcion,
           justificacion: form.justificacion || null,
           fecha_requerida: form.fechaRequerida,
@@ -162,9 +162,31 @@ const useDataSource = ({ source, userId, baseUrl }) => {
         };
 
         const created = await Api.createSolicitud(payload);
+
+        // Subir adjuntos en serie (mientras la SC está en DRAFT). Acumulamos
+        // fallos: si TODOS fallan, abortamos antes del submit; si solo algunos,
+        // continuamos y burbujeamos warnings.
+        const archivos = (form.adjuntos || []).filter((a) => a.file);
+        const uploadWarnings = [];
+        let uploadOks = 0;
+        for (const a of archivos) {
+          try {
+            await Api.uploadAdjunto(created.id, a.file);
+            uploadOks++;
+          } catch (e) {
+            uploadWarnings.push({ filename: a.nombre, error: e });
+          }
+        }
+        if (archivos.length > 0 && uploadOks === 0) {
+          return {
+            ok: false,
+            error: { message: `No se pudo subir ningún adjunto: ${uploadWarnings.map((w) => w.filename).join(', ')}` },
+          };
+        }
+
         await Api.submit(created.id, 'Enviada desde Acquira');
         await loadFromApi();
-        return { ok: true, id: created.numero };
+        return { ok: true, id: created.numero, uploadWarnings };
       } catch (e) { return { ok: false, error: e }; }
     }
     const id = `SOL-2026-${String(170 + solicitudes.length).padStart(4, '0')}`;

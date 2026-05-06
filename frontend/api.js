@@ -184,6 +184,46 @@ const ACTION_LABELS = {
 const URGENCIA_BACKEND = { NORMAL: 'media', URGENTE: 'alta', CRITICA: 'alta' };
 const URGENCIA_FRONTEND = { baja: 'NORMAL', media: 'NORMAL', alta: 'URGENTE' };
 
+// Roles del backend (ver src/sgp/modules/solicitudes/state_machine.py:232-251).
+// SYNC: si se agregan o renombran roles allá, actualizar acá.
+const ROLE_LABELS = {
+  solicitante:    'Solicitante',
+  jefe_area:      'Jefe de área',
+  abastecimiento: 'Abastecimiento',
+  gerencia:       'Gerencia',
+  bodega:         'Bodega',
+  finanzas:       'Finanzas',
+  admin:          'Administrador',
+};
+
+// Estados terminales (ver state_machine.py — terminal => no se transiciona más).
+const TERMINAL_STATUSES = new Set(['closed', 'rejected', 'non_conforming', 'cancelled']);
+
+// Devuelve un descriptor de cuenta regresiva contra el SLA esperado.
+// `iso` es ISO datetime UTC. variant: 'ok' (>24h), 'warn' (0-24h), 'danger' (vencido).
+const formatSlaCountdown = (iso) => {
+  if (!iso) return null;
+  const target = new Date(iso).getTime();
+  if (Number.isNaN(target)) return null;
+  const diffMs = target - Date.now();
+  const abs = Math.abs(diffMs);
+  const horas = Math.floor(abs / 3600_000);
+  const minutos = Math.floor((abs % 3600_000) / 60_000);
+  const dias = Math.floor(horas / 24);
+  let cuanto;
+  if (dias >= 2) cuanto = `${dias}d ${horas % 24}h`;
+  else if (horas >= 1) cuanto = `${horas}h ${minutos}m`;
+  else cuanto = `${minutos}m`;
+  if (diffMs >= 0) {
+    return {
+      label: `Vence en ${cuanto}`,
+      variant: horas < 24 && dias < 1 ? 'warn' : 'ok',
+      diffMs,
+    };
+  }
+  return { label: `Vencido hace ${cuanto}`, variant: 'danger', diffMs };
+};
+
 // ── ADAPTERS — backend ↔ frontend ────────────────────────────────────
 // Convierte SolicitudCompraRead del backend al shape del frontend
 const adaptSolicitud = (sc, empresasMap, ccMap) => {
@@ -243,12 +283,43 @@ const adaptSolicitud = (sc, empresasMap, ccMap) => {
       cargo: '',
       avatar: 'U' + sc.solicitante_id,
     },
-    // eventos: backend no expone log inline; lo derivamos del status
-    eventos: [
-      { id: `e-create-${sc.id}`, fecha: sc.created_at?.slice(0, 16).replace('T', ' '),
-        actor: `Usuario #${sc.solicitante_id}`, actorRol: 'Solicitante', tipo: 'estado', estado: 'solicitada' },
-    ],
+    // eventos: se cargan bajo demanda en TrackingView desde Api.auditLogs().
+    eventos: [],
     _raw: sc,
+  };
+};
+
+// Convierte una entrada de audit_log a un evento del shape esperado por
+// TrackingView. Si el status cambió, lo marca como evento de 'estado'; si
+// no, queda como 'comentario'.
+const adaptAuditLogToEvento = (entry) => {
+  const beforeStatus = entry.before_state?.status || null;
+  const afterStatus = entry.after_state?.status || null;
+  const cambioEstado = beforeStatus !== afterStatus && afterStatus;
+  const fecha = (entry.timestamp || '').slice(0, 16).replace('T', ' ');
+  const actorRol = entry.actor_role
+    ? (ROLE_LABELS[entry.actor_role] || entry.actor_role)
+    : 'Sistema';
+  const accionLabel = ACTION_LABELS[entry.action] || entry.action;
+  const phase = afterStatus ? STATUS_TO_PHASE[afterStatus] : null;
+  let mensaje;
+  if (cambioEstado) {
+    // El badge ya muestra el estado destino; el mensaje complementa.
+    mensaje = entry.comment || null;
+  } else {
+    // Sin cambio de estado: mostrar la acción + comentario.
+    mensaje = entry.comment ? `${accionLabel}: ${entry.comment}` : accionLabel;
+  }
+  return {
+    id: `audit-${entry.id}`,
+    fecha,
+    actor: entry.actor_id != null ? `Usuario #${entry.actor_id}` : 'Sistema',
+    actorRol,
+    tipo: cambioEstado ? 'estado' : 'comentario',
+    estado: phase,
+    mensaje,
+    accion: entry.action,
+    statusLabel: afterStatus ? STATUS_LABELS[afterStatus] : null,
   };
 };
 
@@ -257,6 +328,23 @@ const formatBytes = (n) => {
   if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`;
   if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
   return `${n} B`;
+};
+
+// Extrae un mensaje legible de un error de API. El backend SGP devuelve
+// `{error: {message, code}}` para SGPError; FastAPI usa `detail` para
+// HTTPException; otras fuentes pueden traer `message` plano.
+const formatApiError = (e) => {
+  if (!e) return 'Error inesperado';
+  if (typeof e === 'string') return e;
+  const body = e.body;
+  if (body) {
+    if (typeof body === 'string') return body;
+    if (body.error?.message) return body.error.message;
+    if (typeof body.detail === 'string') return body.detail;
+    if (Array.isArray(body.detail) && body.detail[0]?.msg) return body.detail[0].msg;
+    if (body.message) return body.message;
+  }
+  return e.message || 'Error inesperado';
 };
 
 // Convierte form del UI → SolicitudCompraCreate
@@ -293,7 +381,8 @@ const initApi = async ({ baseUrl, userId, enabled = true } = {}) => {
 
 Object.assign(window, {
   Api, ApiClient, APIError, APIDisabled,
-  initApi, adaptSolicitud, buildCreatePayload,
-  STATUS_LABELS, STATUS_TO_PHASE, ACTION_LABELS,
-  URGENCIA_BACKEND, URGENCIA_FRONTEND, BACKEND_STATUS,
+  initApi, adaptSolicitud, adaptAuditLogToEvento, buildCreatePayload,
+  STATUS_LABELS, STATUS_TO_PHASE, ACTION_LABELS, ROLE_LABELS,
+  URGENCIA_BACKEND, URGENCIA_FRONTEND, BACKEND_STATUS, TERMINAL_STATUSES,
+  formatApiError, formatSlaCountdown,
 });

@@ -62,7 +62,13 @@ const SectionEmpresa = ({ form, set, errors, empresas }) => (
   </div>
 );
 
-// Sección: Detalle (descripción + centro de costo)
+const URGENCIA_OPCIONES = [
+  { id: 'NORMAL',   label: 'Normal',   desc: 'Se procesa por orden de llegada' },
+  { id: 'URGENTE',  label: 'Urgente',  desc: 'Se prioriza sobre solicitudes normales' },
+  { id: 'CRITICA',  label: 'Crítica',  desc: 'Bloquea operación — atención inmediata' },
+];
+
+// Sección: Detalle (descripción + centro de costo + urgencia)
 const SectionDetalle = ({ form, set, errors, centros }) => {
   const ccDisponibles = form.empresa ? (centros[form.empresa] || []) : [];
   return (
@@ -81,7 +87,7 @@ const SectionDetalle = ({ form, set, errors, centros }) => {
           onChange={(e) => set({ titulo: e.target.value })}
         />
       </Field>
-      <Field label="Descripción" required error={errors.descripcion} hint="Indica el contexto, urgencia y justificación de la compra">
+      <Field label="Descripción" required error={errors.descripcion} hint="Indica el contexto y la justificación de la compra">
         <Textarea
           rows={5}
           placeholder="Describe la necesidad, el motivo y cualquier información relevante para la aprobación…"
@@ -108,6 +114,21 @@ const SectionDetalle = ({ form, set, errors, centros }) => {
           min={new Date().toISOString().slice(0, 10)}
           onChange={(e) => set({ fechaRequerida: e.target.value })}
         />
+      </Field>
+      <Field label="Urgencia" required hint="Define la prioridad del flujo de aprobación">
+        <div className="tipo-grid">
+          {URGENCIA_OPCIONES.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              className={`tipo-chip${form.urgenciaBackend === u.id ? ' tipo-chip-active' : ''}`}
+              onClick={() => set({ urgenciaBackend: u.id })}
+            >
+              <div className="tipo-chip-label">{u.label}</div>
+              <div className="tipo-chip-desc">{u.desc}</div>
+            </button>
+          ))}
+        </div>
       </Field>
     </div>
   );
@@ -416,6 +437,7 @@ const SectionAdjuntos = ({ form, set }) => {
       nombre: f.name,
       tipo: tiposAdjunto(f.name),
       tamano: `${(f.size / 1024 / 1024).toFixed(1)} MB`,
+      file: f,
     }));
     set({ adjuntos: [...form.adjuntos, ...nuevos] });
   };
@@ -536,6 +558,7 @@ const NuevaSolicitud = ({ layout = 'twocol', onSubmit, onCancel, empresas: empre
   const [form, setForm] = React.useState({
     empresa: '', tipo: '', titulo: '', descripcion: '', centroCosto: '',
     fechaRequerida: '',
+    urgenciaBackend: 'NORMAL',
     // items: cada uno tiene `itemId` (backend id, asignado por el picker) o
     // null mientras no se haya seleccionado/creado.
     items: [{ id: 1, itemId: null, sku: '', nombre: '', cantidad: 1, especificacion: '' }],

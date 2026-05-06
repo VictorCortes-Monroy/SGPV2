@@ -43,7 +43,39 @@ const TrackingView = ({ solicitud, onBack }) => {
   const idxActual = ESTADOS.findIndex((e) => e.id === solicitud.estadoActual);
   const estadoActual = ESTADOS[idxActual];
   const [nuevoComentario, setNuevoComentario] = React.useState('');
-  const [eventos, setEventos] = React.useState(solicitud.eventos);
+  const [eventos, setEventos] = React.useState(solicitud.eventos || []);
+  const [eventosLoading, setEventosLoading] = React.useState(false);
+  const [eventosError, setEventosError] = React.useState(null);
+
+  // Cargar la línea de tiempo real desde el audit_log cuando hay backendId.
+  // Si no hay (modo mock o SC sin sincronizar), nos quedamos con `solicitud.eventos`.
+  React.useEffect(() => {
+    if (!solicitud.backendId || !ApiClient.enabled) return;
+    let cancelado = false;
+    setEventosLoading(true);
+    setEventosError(null);
+    Api.auditLogs({
+      entity_type: 'solicitud_compra',
+      entity_id: String(solicitud.backendId),
+      limit: 100,
+    })
+      .then((entries) => {
+        if (cancelado) return;
+        // El backend devuelve DESC; la UI lo lee en orden cronológico ASC.
+        const ordenadas = [...(entries || [])].sort((a, b) =>
+          (a.timestamp || '').localeCompare(b.timestamp || ''),
+        );
+        setEventos(ordenadas.map(adaptAuditLogToEvento));
+      })
+      .catch((e) => {
+        if (cancelado) return;
+        setEventosError(e);
+      })
+      .finally(() => {
+        if (!cancelado) setEventosLoading(false);
+      });
+    return () => { cancelado = true; };
+  }, [solicitud.backendId]);
 
   const enviar = () => {
     if (!nuevoComentario.trim()) return;
@@ -59,8 +91,6 @@ const TrackingView = ({ solicitud, onBack }) => {
     setNuevoComentario('');
   };
 
-  // Próximo estado / siguiente paso
-  const siguienteEstado = ESTADOS[idxActual + 1];
   const tieneNovedad = eventos.some((e) => e.tipo === 'comentario' && e.actorRol !== 'Solicitante');
 
   return (
@@ -91,14 +121,11 @@ const TrackingView = ({ solicitud, onBack }) => {
             </div>
             <div>
               <div className="hero-status-label">Estado actual</div>
-              <div className="hero-status-value">{estadoActual.label}</div>
+              <div className="hero-status-value">
+                {STATUS_LABELS[solicitud.backendStatus] || estadoActual.label}
+              </div>
             </div>
           </div>
-          {siguienteEstado && solicitud.estadoActual !== 'borrador' && (
-            <div className="hero-next">
-              Siguiente: <strong>{siguienteEstado.label}</strong>
-            </div>
-          )}
         </div>
       </div>
 
@@ -126,7 +153,13 @@ const TrackingView = ({ solicitud, onBack }) => {
               <span className="card-head-count">{eventos.length}</span>
             </div>
             <div className="activity">
-              {eventos.length === 0 && (
+              {eventosLoading && (
+                <div className="empty-mini">Cargando línea de tiempo…</div>
+              )}
+              {eventosError && !eventosLoading && (
+                <div className="empty-mini">No se pudo cargar la actividad: {eventosError.message || 'error desconocido'}</div>
+              )}
+              {!eventosLoading && !eventosError && eventos.length === 0 && (
                 <div className="empty-mini">Aún no hay actividad. La solicitud está en borrador.</div>
               )}
               {eventos.map((ev, i) => {
@@ -153,7 +186,11 @@ const TrackingView = ({ solicitud, onBack }) => {
                       {ev.tipo === 'estado' ? (
                         <div className="activity-body">
                           <span>cambió el estado a </span>
-                          <StatusBadge estadoId={ev.estado} />
+                          {ev.statusLabel ? (
+                            <Badge variant="emerald" icon="check">{ev.statusLabel}</Badge>
+                          ) : (
+                            <StatusBadge estadoId={ev.estado} />
+                          )}
                           {ev.mensaje && <div className="activity-msg activity-msg-inline">{ev.mensaje}</div>}
                         </div>
                       ) : (
@@ -238,32 +275,67 @@ const TrackingView = ({ solicitud, onBack }) => {
             </Card>
           )}
 
-          <Card>
-            <div className="card-head"><h3>Aprobaciones</h3></div>
-            <div className="aprobaciones-list">
-              {[
-                { rol: 'Jefe directo', nombre: 'Marco Riquelme', estado: idxActual >= 2 ? 'ok' : (idxActual === 1 ? 'wait' : 'pending') },
-                { rol: 'Finanzas', nombre: 'Patricia Núñez', estado: idxActual >= 3 ? 'ok' : (idxActual === 2 ? 'wait' : 'pending') },
-                { rol: 'Gerencia', nombre: 'Sofía Gallardo', estado: idxActual >= 3 ? 'ok' : 'pending' },
-              ].map((a, i) => (
-                <div key={i} className="aprob-row">
-                  <Avatar initials={a.nombre.split(' ').map((s) => s[0]).slice(0, 2).join('')} size={28} color="#475569" />
-                  <div className="aprob-text">
-                    <div className="aprob-rol">{a.rol}</div>
-                    <div className="aprob-nombre">{a.nombre}</div>
-                  </div>
-                  <div className={`aprob-estado aprob-${a.estado}`}>
-                    {a.estado === 'ok' && <Icon name="check" size={14} />}
-                    {a.estado === 'wait' && <Icon name="clock" size={14} />}
-                    {a.estado === 'pending' && <span className="aprob-dot" />}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
+          <EstadoActualCard solicitud={solicitud} />
         </div>
       </div>
     </div>
+  );
+};
+
+// Card "Estado actual" — reemplaza el panel de aprobaciones hardcoded.
+// Muestra a quién está esperando la solicitud (current_assignee_role) y
+// la cuenta regresiva al SLA esperado (expected_resolution_at).
+const EstadoActualCard = ({ solicitud }) => {
+  // Tick cada 60s para refrescar el countdown sin re-fetch.
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const status = solicitud.backendStatus;
+  const esTerminal = status && TERMINAL_STATUSES.has(status);
+  const rol = solicitud.currentAssigneeRole;
+  const rolLabel = rol ? (ROLE_LABELS[rol] || rol) : null;
+  const sla = !esTerminal ? formatSlaCountdown(solicitud.expectedResolutionAt) : null;
+  const statusLabel = STATUS_LABELS[status] || solicitud.statusLabel || '—';
+  const statusOk = status === 'closed';
+  const statusFail = status === 'rejected' || status === 'non_conforming' || status === 'cancelled';
+
+  return (
+    <Card>
+      <div className="card-head"><h3>Estado actual</h3></div>
+      <div className="estado-actual">
+        <div className="estado-actual-status">
+          <Icon
+            name={statusOk ? 'check' : statusFail ? 'alert' : 'clock'}
+            size={18}
+          />
+          <span>{statusLabel}</span>
+        </div>
+        {esTerminal ? (
+          <div className="estado-actual-msg">Solicitud finalizada — sin pasos pendientes.</div>
+        ) : rol ? (
+          <>
+            <div className="estado-actual-rol">
+              <div className="estado-actual-rol-label">Pendiente de</div>
+              <div className="estado-actual-rol-value">
+                <Avatar initials={(rolLabel || '?').split(' ').map((s) => s[0]).slice(0, 2).join('')} size={28} color="#475569" />
+                <span>{rolLabel}</span>
+              </div>
+            </div>
+            {sla && (
+              <div className={`estado-actual-sla estado-actual-sla-${sla.variant}`}>
+                <Icon name="clock" size={14} />
+                <span>{sla.label}</span>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="estado-actual-msg">Esperando próximo paso del flujo.</div>
+        )}
+      </div>
+    </Card>
   );
 };
 

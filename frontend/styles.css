@@ -799,8 +799,6 @@ input, textarea, select { font-family: inherit; }
 .hero-status-borrador { background: var(--bg-subtle); border-color: var(--border); }
 .hero-status-borrador .hero-status-icon { background: var(--text-muted); }
 .hero-status-borrador .hero-status-label { color: var(--text-muted); }
-.hero-next { font-size: 12px; color: var(--text-faint); }
-.hero-next strong { color: var(--text); font-weight: 600; }
 
 /* Timeline horizontal */
 .tracking-timeline-card { padding: 26px 18px 18px; }
@@ -982,22 +980,30 @@ input, textarea, select { font-family: inherit; }
 .adjuntos-list-side .adjunto-nombre { font-size: 12.5px; }
 .adjuntos-list-side .adjunto-icon { width: 28px; height: 28px; }
 
-/* Aprobaciones */
-.aprobaciones-list { display: flex; flex-direction: column; gap: 10px; }
-.aprob-row { display: flex; gap: 10px; align-items: center; }
-.aprob-text { flex: 1; min-width: 0; }
-.aprob-rol { font-size: 11.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
-.aprob-nombre { font-size: 13px; font-weight: 500; }
-.aprob-estado {
-  width: 26px; height: 26px;
-  border-radius: 50%;
-  display: grid; place-items: center;
-  flex-shrink: 0;
+/* Estado actual (panel "quién tiene la pelota" + SLA) */
+.estado-actual { display: flex; flex-direction: column; gap: 12px; }
+.estado-actual-status {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: 8px;
+  background: var(--bg-subtle); color: var(--text);
+  font-size: 13px; font-weight: 600;
 }
-.aprob-ok { background: var(--accent-emerald-soft); color: var(--accent-emerald); }
-.aprob-wait { background: var(--accent-amber-soft); color: var(--accent-amber); }
-.aprob-pending { background: var(--bg-subtle); }
-.aprob-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
+.estado-actual-rol-label {
+  font-size: 11px; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+  margin-bottom: 4px;
+}
+.estado-actual-rol-value { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; }
+.estado-actual-sla {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-radius: 6px;
+  font-size: 12px; font-weight: 500;
+  align-self: flex-start;
+}
+.estado-actual-sla-ok { background: var(--accent-emerald-soft); color: var(--accent-emerald); }
+.estado-actual-sla-warn { background: var(--accent-amber-soft); color: var(--accent-amber); }
+.estado-actual-sla-danger { background: #fee2e2; color: var(--accent-red); }
+.estado-actual-msg { font-size: 13px; color: var(--text-muted); }
 
 /* ── Responsive ─────────────────────────────────────── */
 @media (max-width: 1100px) {

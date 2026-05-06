@@ -69,7 +69,10 @@
       const ds = useDataSource({ source: t.dataSource, userId: t.apiUserId, baseUrl: t.apiBaseUrl });
       const { solicitudes, conn, empresas, centros } = ds;
 
-      const showToast = (msg) => { setToast({ msg }); setTimeout(() => setToast(null), 5000); };
+      const showToast = (msg, variant = 'success') => {
+        setToast({ msg, variant });
+        setTimeout(() => setToast(null), 5000);
+      };
 
       const selectRole = (r) => { setRole(r); setView(r === 'solicitante' ? 'dashboard' : 'bandeja'); setActiveId(null); };
       const navigate = (v) => { setView(v); setActiveId(null); window.scrollTo(0, 0); };
@@ -80,9 +83,14 @@
         if (res.ok) {
           setActiveId(res.id);
           setView('tracking');
-          showToast(`Solicitud ${res.id} enviada.`);
+          if (res.uploadWarnings && res.uploadWarnings.length > 0) {
+            const nombres = res.uploadWarnings.map((w) => w.filename).join(', ');
+            showToast(`Solicitud ${res.id} enviada, pero falló la subida de: ${nombres}`, 'warn');
+          } else {
+            showToast(`Solicitud ${res.id} enviada.`, 'success');
+          }
         } else {
-          showToast(`Error: ${res.error?.message || 'no se pudo crear'}`);
+          showToast(formatApiError(res.error), 'error');
         }
         window.scrollTo(0, 0);
       };
@@ -94,10 +102,10 @@
         const res = await fn(sol, mensaje);
         if (res.ok) {
           const verbo = tipo === 'aprobar' ? 'aprobada' : tipo === 'rechazar' ? 'rechazada' : 'devuelta con observaciones';
-          showToast(`Solicitud ${activeId} ${verbo}.`);
+          showToast(`Solicitud ${activeId} ${verbo}.`, 'success');
           if (tipo !== 'cambios') { setView('bandeja'); setActiveId(null); }
         } else {
-          showToast(`Error: ${res.error?.message || 'no se pudo procesar'}`);
+          showToast(formatApiError(res.error), 'error');
         }
       };
 
@@ -192,8 +200,13 @@
           <NotificationCenter open={notifOpen} onClose={() => setNotifOpen(false)} />
 
           {toast && (
-            <div className="toast">
-              <div className="toast-icon"><Icon name="check" size={16} /></div>
+            <div className={`toast toast-${toast.variant || 'success'}`}>
+              <div className="toast-icon">
+                <Icon
+                  name={toast.variant === 'error' ? 'alert' : toast.variant === 'warn' ? 'alert' : 'check'}
+                  size={16}
+                />
+              </div>
               <div>{toast.msg}</div>
             </div>
           )}
@@ -254,8 +267,12 @@
     .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
       background: #1a1f1c; color: #fff; padding: 12px 18px; border-radius: 10px;
       display: flex; align-items: center; gap: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.25);
-      font-size: 13.5px; z-index: 1000; animation: toastIn 0.25s ease-out; max-width: 480px; }
-    .toast-icon { width: 24px; height: 24px; border-radius: 50%; background: #047857; display: grid; place-items: center; }
+      font-size: 13.5px; z-index: 1000; animation: toastIn 0.25s ease-out; max-width: 540px; }
+    .toast-icon { width: 24px; height: 24px; border-radius: 50%; background: #047857; display: grid; place-items: center; flex-shrink: 0; }
+    .toast-error { background: #7f1d1d; }
+    .toast-error .toast-icon { background: #b91c1c; }
+    .toast-warn { background: #78350f; }
+    .toast-warn .toast-icon { background: #b45309; }
     @keyframes toastIn { from { transform: translate(-50%, 16px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
     .tweak-tip { font-size: 11px; color: rgba(41,38,27,.55); line-height: 1.4; padding: 8px 4px 0; }
 
